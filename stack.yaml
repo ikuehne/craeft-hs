@@ -2,5 +2,8 @@ flags: {}
 extra-package-dbs: []
 packages:
 - .
-extra-deps: []
+extra-deps:
+- ansi-terminal-0.7.1.1
+- llvm-hs-5.0.0
+- llvm-hs-pure-5.0.0
 resolver: lts-9.6

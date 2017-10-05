@@ -11,12 +11,8 @@ module AST ( Annotated (..)
 
 import qualified Text.Parsec.Pos as Pos
 
---
--- General.
---
+import Error
 
-data Annotated a = Annotated { contents :: a, pos :: Pos.SourcePos }
-  deriving Show
 --
 -- Top-level syntax.
 --

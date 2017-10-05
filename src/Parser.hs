@@ -1,21 +1,60 @@
-module Parser where
+module Parser ( parseExpression
+              , parseType
+              , parseStatement
+              , parseTopLevel
+              , parseProgram ) where
 
 import Control.Monad
+import Control.Monad.Trans.Except
 import Text.Parsec
 import Text.Parsec.String (Parser)
+import Text.Parsec.Error as E
 import Text.Parsec.Expr
 import Text.Parsec.Char
 import qualified AST
 import qualified Lexer
+import Error
+
+--
+-- Nicely wrapping everything.
+--
+
+parsecToError :: ParseError -> Error
+parsecToError e = ParseError (render $ E.errorMessages e) (E.errorPos e)
+  where render = showErrorMessages "or" "unknown" "    expecting"
+                                   "    unexpected" "end-of-input"
+
+craeftParse :: Parser a -> String -> String -> CraeftExcept a
+craeftParse p f s =
+  case Text.Parsec.parse p f s of
+    Left err     -> throwE $ parsecToError err
+    Right result -> return result
+
+annotate :: Parser a -> Parser (Annotated a)
+annotate p = flip Annotated <$> getPosition <*> p
+
+type ParseFn a = String -> String -> CraeftExcept a
+
+parseExpression :: ParseFn (Annotated AST.Expression)
+parseExpression = craeftParse expr
+
+parseType :: ParseFn (Annotated AST.Type)
+parseType = craeftParse typeParser
+
+parseStatement :: ParseFn (Annotated AST.Statement)
+parseStatement = craeftParse $ annotate statement
+
+parseTopLevel :: ParseFn (Annotated AST.TopLevel)
+parseTopLevel = craeftParse $ annotate topLevel
+
+parseProgram :: ParseFn [Annotated AST.TopLevel]
+parseProgram = craeftParse $ many $ annotate topLevel
 
 --
 -- Parsing expressions.
 --
 
-type ExpressionParser = Parser (AST.Annotated AST.Expression)
-
-annotate :: Parser a -> Parser (AST.Annotated a)
-annotate p = flip AST.Annotated <$> getPosition <*> p
+type ExpressionParser = Parser (Annotated AST.Expression)
 
 unsigned = AST.UIntLiteral <$> Lexer.unsigned
 signed = AST.IntLiteral <$> Lexer.integer
@@ -54,12 +93,12 @@ fieldAccessOp = Infix ((do pos <- getPosition
                            return $ result pos) <?> "field access")
                       AssocLeft
   -- This can lead to a hard crash.  Shh...
-  where result pos struct (AST.Annotated (AST.LValueExpr (AST.Variable v)) _)
-          = AST.Annotated (AST.LValueExpr (AST.FieldAccess struct v)) pos
+  where result pos struct (Annotated (AST.LValueExpr (AST.Variable v)) _)
+          = Annotated (AST.LValueExpr (AST.FieldAccess struct v)) pos
 
 binary op = Infix (do pos <- getPosition
                       Lexer.reservedOp op
-                      let f x y = AST.Annotated (AST.Binop x op y) pos
+                      let f x y = Annotated (AST.Binop x op y) pos
                       return f) AssocLeft
 
 table = [fieldAccessOp] : (fmap binary <$>
@@ -71,12 +110,12 @@ table = [fieldAccessOp] : (fmap binary <$>
 
 -- Parsing types.
 
-typeParser :: Parser (AST.Annotated AST.Type)
+typeParser :: Parser (Annotated AST.Type)
 typeParser = do pos <- getPosition
                 n <- Lexer.tname
-                let name = AST.Annotated (AST.NamedType n) pos
+                let name = Annotated (AST.NamedType n) pos
                 ptrs <- map AST.pos <$> many (annotate $ Lexer.reservedOp "*")
-                let aux pos t = AST.Annotated (AST.Pointer t) pos
+                let aux pos t = Annotated (AST.Pointer t) pos
                 return $ foldr aux name ptrs
 
 -- Parsing statements.
@@ -99,7 +138,7 @@ assignment = do l <- annotate lvalue
                      r <- expr
                      return $ AST.Assignment l r) <?> "assignment")
                    <|> let c = AST.contents l
-                           e = AST.Annotated (AST.LValueExpr c) (AST.pos l)
+                           e = Annotated (AST.LValueExpr c) (AST.pos l)
                         in return $ AST.ExpressionStatement e
 
 declaration :: Parser AST.ValueDeclaration
@@ -150,7 +189,7 @@ functionSignature :: Parser AST.FunctionSignature
 functionSignature = (do Lexer.reserved "fn"
                         name <- Lexer.identifier
                         args <- argList
-                        let void = AST.Annotated AST.Void <$> getPosition
+                        let void = Annotated AST.Void <$> getPosition
                         ret <- (Lexer.arrow >> typeParser) <|> void
                         return $ AST.FunctionSignature name args ret)
     <?> "function signature"
@@ -159,7 +198,7 @@ functionSignature = (do Lexer.reserved "fn"
 functionDefinition :: Parser AST.TopLevel
 functionDefinition = annotate functionSignature >>= fnDeclOrDef
 
-fnDeclOrDef :: AST.Annotated AST.FunctionSignature -> Parser AST.TopLevel
+fnDeclOrDef :: Annotated AST.FunctionSignature -> Parser AST.TopLevel
 fnDeclOrDef sig = (AST.FunctionDefinition sig <$> Lexer.braces block
                     <?> "function definition")
                 <|> return (AST.FunctionDecl $ AST.contents sig)

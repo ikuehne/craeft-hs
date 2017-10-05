@@ -1,7 +1,12 @@
 module Main where
 
-import Text.Parsec
 import qualified Parser
+import Control.Monad.Trans.Except
+import Error
+import qualified Environment
 
 main :: IO ()
-main = getLine >>= parseTest Parser.topLevel
+main = do result <- Parser.parseTopLevel "[stdin]" <$> getLine
+          case runExcept result of
+            Left e -> prettyPrintError e
+            Right r -> print r
