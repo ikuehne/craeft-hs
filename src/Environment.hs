@@ -28,7 +28,7 @@ import Error
 import qualified Scope
 
 data Precision = SinglePrec | DoublePrec
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
 data Type = Struct [(String, Type)]
           | Pointer Type
@@ -38,7 +38,7 @@ data Type = Struct [(String, Type)]
           | Floating Precision
           | Opaque
           | Void
-  deriving Eq
+  deriving (Eq, Show)
 
 data Value = Value { ty :: Type, value :: Operand }
 

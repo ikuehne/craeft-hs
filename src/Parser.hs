@@ -35,16 +35,16 @@ annotate p = flip Annotated <$> getPosition <*> p
 
 type ParseFn a = String -> String -> CraeftExcept a
 
-parseExpression :: ParseFn AST.PositionedExpression
+parseExpression :: ParseFn (Annotated AST.Expression)
 parseExpression = craeftParse expr
 
 parseType :: ParseFn (Annotated AST.Type)
 parseType = craeftParse typeParser
 
-parseStatement :: ParseFn (Annotated AST.PositionedStatement)
+parseStatement :: ParseFn (Annotated AST.Statement)
 parseStatement = craeftParse $ annotate statement
 
-parseTopLevel :: ParseFn (Annotated AST.PositionedTopLevel)
+parseTopLevel :: ParseFn (Annotated AST.TopLevel)
 parseTopLevel = craeftParse $ annotate topLevel
 
 parseProgram :: ParseFn AST.Program
@@ -54,21 +54,22 @@ parseProgram = craeftParse $ many $ annotate topLevel
 -- Parsing expressions.
 --
 
-type ExpressionParser = Parser AST.PositionedExpression
+type ExpressionParser = Parser (Annotated AST.Expression)
 
 positionExpr :: (SourcePos -> ExpressionParser) -> ExpressionParser
 positionExpr f = do pos <- getPosition
                     f pos
 
 unsigned pos = do i <- Lexer.unsigned
-                  return $ AST.EW (AST.UIntLiteral i) pos
+                  return $ Annotated (AST.UIntLiteral i) pos
 signed pos = do i <- Lexer.integer
-                return $ AST.EW (AST.IntLiteral i) pos
+                return $ Annotated (AST.IntLiteral i) pos
 float pos = do f <- Lexer.float
-               return $ AST.EW (AST.FloatLiteral f) pos
+               return $ Annotated (AST.FloatLiteral f) pos
 string pos = do s <- Lexer.string
-                return $ AST.EW (AST.StringLiteral s) pos
+                return $ Annotated (AST.StringLiteral s) pos
 
+expr :: ExpressionParser
 expr = buildExpressionParser table term <?> "expression"
 
 term :: ExpressionParser
@@ -79,36 +80,37 @@ term = do p <- getPosition
             <|> positionExpr float
             <|> positionExpr Parser.string
             <|> do lv <- AST.LValueExpr <$> (dereference <|> variable)
-                   return $ AST.EW lv p
+                   return $ Annotated lv p
             <?> "simple expression"
 
-lvalue :: Parser AST.PositionedLValue
+lvalue :: Parser AST.LValue
 lvalue = dereference <|> variable <|> fieldAccess <?> "lvalue"
 
-variable :: Parser AST.PositionedLValue
+variable :: Parser AST.LValue
 variable = AST.Variable <$> Lexer.identifier <?> "variable"
 
-fieldAccess :: Parser AST.PositionedLValue
+fieldAccess :: Parser AST.LValue
 fieldAccess = do e <- expr
                  Lexer.dot
                  (AST.Variable v) <- variable
-                 return $ AST.FieldAccess e v
+                 return $ AST.FieldAccess (contents e) v
 
-dereference :: Parser (AST.LValue AST.PositionedExpression)
+dereference :: Parser AST.LValue
 dereference = (do Lexer.reservedOp "*"
-                  AST.Dereference <$> expr) <?> "dereference"
+                  AST.Dereference . contents <$> expr) <?> "dereference"
 
 fieldAccessOp = Infix ((do pos <- getPosition
                            Lexer.reservedOp "."
                            return $ result pos) <?> "field access")
                       AssocLeft
   -- This can lead to a hard crash.  Shh...
-  where result pos struct (AST.EW (AST.LValueExpr (AST.Variable v)) _)
-          = AST.EW (AST.LValueExpr (AST.FieldAccess struct v)) pos
+  where result pos (Annotated struct _)
+                   (Annotated (AST.LValueExpr (AST.Variable v)) _)
+          = Annotated (AST.LValueExpr (AST.FieldAccess struct v)) pos
 
 binary op = Infix (do pos <- getPosition
                       Lexer.reservedOp op
-                      let f x y = AST.EW (AST.Binop x op y) pos
+                      let f x y = Annotated (AST.Binop x op y) pos
                       return f) AssocLeft
 
 table = [fieldAccessOp] : (fmap binary <$>
@@ -121,15 +123,15 @@ table = [fieldAccessOp] : (fmap binary <$>
 -- Parsing types.
 
 typeParser :: Parser (Annotated AST.Type)
-typeParser = do pos <- getPosition
+typeParser = do p <- getPosition
                 n <- Lexer.tname
-                let name = Annotated (AST.NamedType n) pos
-                ptrs <- map AST.pos <$> many (annotate $ Lexer.reservedOp "*")
+                let name = Annotated (AST.NamedType n) p
+                ptrs <- map pos <$> many (annotate $ Lexer.reservedOp "*")
                 let aux pos t = Annotated (AST.Pointer t) pos
                 return $ foldr aux name ptrs
 
 -- Parsing statements.
-statement :: Parser AST.PositionedStatement
+statement :: Parser AST.Statement
 statement = compoundDeclaration
         <|> assignment
         <|> AST.ExpressionStatement <$> expr
@@ -137,41 +139,41 @@ statement = compoundDeclaration
         -- <|> ifStatement
         <?> "statement"
 
-returnStatement :: Parser AST.PositionedStatement
+returnStatement :: Parser AST.Statement
 returnStatement = (do r <- Lexer.reserved "return"
                       (AST.Return <$> expr) <|> return AST.VoidReturn)
               <?> "return statement"
 
-assignment :: Parser AST.PositionedStatement
+assignment :: Parser AST.Statement
 assignment = do p <- getPosition
                 l <- lvalue
                 ((do Lexer.equals
                      r <- expr
                      return $ AST.Assignment l r) <?> "assignment")
-                   <|> let e = AST.EW (AST.LValueExpr l) p
+                   <|> let e = Annotated (AST.LValueExpr l) p
                         in return $ AST.ExpressionStatement e
 
 declaration :: Parser AST.ValueDeclaration
 declaration = do t <- typeParser
                  AST.Variable v <- variable
-                 return $ AST.ValueDeclaration (AST.contents t) v
+                 return $ AST.ValueDeclaration (contents t) v
 
-compoundDeclaration :: Parser AST.PositionedStatement
+compoundDeclaration :: Parser AST.Statement
 compoundDeclaration = do d <- annotate declaration
                          (do Lexer.equals
                              e <- expr
                              return $ AST.CompoundDeclaration d e)
-                           <|> return (AST.Declaration $ AST.contents d)
+                           <|> return (AST.Declaration $ contents d)
 
 semiFollowed :: Parser a -> Parser [a]
 semiFollowed p = many $ do s <- p
                            Lexer.semi 
                            return s
 
-block :: Parser (AST.Block AST.PositionedExpression)
+block :: Parser AST.Block
 block = semiFollowed $ annotate statement
 
-ifStatement :: Parser AST.PositionedStatement
+ifStatement :: Parser AST.Statement
 ifStatement = do Lexer.reserved "if"
                  cond <- expr
                  ifBlock <- Lexer.braces block
@@ -183,10 +185,10 @@ ifStatement = do Lexer.reserved "if"
 -- Top-level parsing.
 --
 
-topLevel :: Parser AST.PositionedTopLevel
+topLevel :: Parser AST.TopLevel
 topLevel = structDeclaration <|> functionDefinition <?> "toplevel form"
 
-structDeclaration :: Parser AST.PositionedTopLevel
+structDeclaration :: Parser AST.TopLevel
 structDeclaration = (do Lexer.reserved "struct"
                         name <- Lexer.tname
                         (do fields <- Lexer.braces members
@@ -205,11 +207,10 @@ functionSignature = (do Lexer.reserved "fn"
     <?> "function signature"
   where argList = Lexer.parens $ Lexer.commaSep (annotate declaration)
 
-functionDefinition :: Parser AST.PositionedTopLevel
+functionDefinition :: Parser AST.TopLevel
 functionDefinition = annotate functionSignature >>= fnDeclOrDef
 
-fnDeclOrDef :: Annotated AST.FunctionSignature
-            -> Parser AST.PositionedTopLevel
+fnDeclOrDef :: Annotated AST.FunctionSignature -> Parser AST.TopLevel
 fnDeclOrDef sig = (AST.FunctionDefinition sig <$> Lexer.braces block
                     <?> "function definition")
-                <|> return (AST.FunctionDecl $ AST.contents sig)
+                <|> return (AST.FunctionDecl $ contents sig)

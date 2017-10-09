@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module TypeChecker ( typeCheck ) where
+module TypeChecker where
 
 import Control.Arrow ((***))
 import Control.Monad ( sequence, when )
@@ -11,6 +11,7 @@ import qualified Data.List as List
 import Control.Lens
 
 import qualified AST
+import qualified TypedAST as TAST
 import Environment ( Type (..)
                    , Precision (..) )
 import Error
@@ -48,7 +49,7 @@ initialTypes = Scope.make $ Map.unions [signedTypes, unsignedTypes, floatTypes]
 
 initState = CheckerState initialTypes Scope.empty
 
-typeCheck :: AST.Program -> Checker AST.TypedProgram
+typeCheck :: AST.Program -> Checker TAST.Program
 typeCheck = mapM typeCheckTopLevel
 
 typeCheckType :: Annotated AST.Type -> Checker Type
@@ -59,95 +60,108 @@ typeCheckType (Annotated t p) = case t of
 
 declToType (Annotated (AST.ValueDeclaration ty _) p) = Annotated ty p
 
-typeCheckSig :: AST.FunctionSignature -> Checker Type
-typeCheckSig (AST.FunctionSignature name args retty) = do
+typeCheckSig :: AST.FunctionSignature -> Checker TAST.FunctionSignature
+typeCheckSig (AST.FunctionSignature name args retty') = do
     argtys <- mapM (typeCheckType . declToType) args
-    retty <- typeCheckType retty
+    retty <- typeCheckType retty'
     zoom variables $ Scope.insert name (Function argtys retty)
-    return retty
+    let typedArgs = zip (map (AST.name . contents) args) argtys
+        typedSig = TAST.Sig name typedArgs retty
+    return typedSig
 
-typeCheckTopLevel :: Annotated AST.PositionedTopLevel
-                  -> Checker (Annotated AST.TypedTopLevel)
+typeCheckTopLevel :: Annotated AST.TopLevel
+                  -> Checker (Annotated TAST.TopLevel)
 typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
     AST.StructDeclaration name members -> do
+        -- Allow recursive types.
+        zoom types $ Scope.insert name Opaque
         memberTypes <- mapM (typeCheckType . declToType) members
-        let names = map (AST.name . AST.contents) members
-        zoom types $ Scope.insert name (Struct $ zip names memberTypes)
-        return $ AST.StructDeclaration name members
+        let names = map (AST.name . contents) members
+            memberAssocList = zip names memberTypes
+        zoom types $ Scope.insert name $ Struct memberAssocList
+        return $ TAST.StructDeclaration name memberAssocList
     AST.TypeDeclaration name -> do
         zoom types $ Scope.insert name Opaque
-        return $ AST.TypeDeclaration name
+        return $ TAST.TypeDeclaration name
     AST.FunctionDecl sig -> do
-        typeCheckSig sig
-        return $ AST.FunctionDecl sig
-    AST.FunctionDefinition annotatedSig@(Annotated sig _) body -> do
-        retty <- typeCheckSig sig
+        checkedSig <- typeCheckSig sig
+        return $ TAST.FunctionDecl checkedSig
+    AST.FunctionDefinition (Annotated sig _) body -> do
+        checkedSig <- typeCheckSig sig
         push
-        checkedBody <- mapM (`typeCheckStatement` retty) body
+        sequence_ [zoom variables $ Scope.insert name ty
+                      | (name, ty) <- TAST.args checkedSig]
+        checkedBody <- mapM (`typeCheckStatement` TAST.retty checkedSig) body
         pop
-        return $ AST.FunctionDefinition annotatedSig checkedBody
+        return $ TAST.Function checkedSig checkedBody
 
-typeCheckStatement :: Annotated AST.PositionedStatement
+typeCheckStatement :: Annotated AST.Statement
                    -> Type
-                   -> Checker (Annotated AST.TypedStatement)
+                   -> Checker (Annotated TAST.Statement)
 typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
-    AST.ExpressionStatement e -> AST.ExpressionStatement <$> typeCheckExpr e
+    AST.ExpressionStatement e ->
+        TAST.ExpressionStmt . contents <$> typeCheckExpr e
     AST.Return e -> do
-        ty <- getType <$> typeCheckExpr e
-        when (ty /= retty) $
-            throwC badReturn
-        AST.Return <$> typeCheckExpr e
+        checkedExpr <- typeCheckExpr e
+        when (getType checkedExpr /= retty) badReturn
+        return $ TAST.Return checkedExpr
     AST.VoidReturn -> do
-        when (retty /= Void) $
-            throwC badReturn
-        return AST.VoidReturn
+        when (retty /= Void) badReturn
+        return TAST.VoidReturn
     AST.Assignment lhs rhs -> do
         (lhsTy, checkedLhs) <- typeCheckLValue p lhs
         checkedRhs <- typeCheckExpr rhs
         when (lhsTy /= getType checkedRhs) $
-            throwC $ TypeError "assigning to variable of different type" p
-        return $ AST.Assignment checkedLhs checkedRhs
-    AST.Declaration decl -> checkDecl decl >> return (AST.Declaration decl)
+            throw "assigning to variable of different type"
+        return $ TAST.Assignment checkedLhs checkedRhs
+    AST.Declaration decl ->
+        TAST.Declaration (AST.name decl) <$> checkDecl decl
     AST.CompoundDeclaration decl e -> do
         expected <- checkDecl $ contents decl
         found <- typeCheckExpr e
         when (expected /= getType found) $
-            throwC $ TypeError "compound assignment type mismatch" p
-        return $ AST.CompoundDeclaration decl found
+            throw "compound assignment type mismatch"
+        let name = AST.name $ contents decl
+        return $ TAST.CompoundDeclaration name expected found
     AST.IfStatement cond ifb elseb -> do
         checkedCond <- typeCheckExpr cond
-        let condTy = getType checkedCond
-        when (condTy /= Unsigned 1) $
-            throwC $ TypeError "if condition must be U1" p
+        when (getType checkedCond /= Unsigned 1) $
+            throw "if condition must be U1"
+        -- New scope for the "if" block.
         push
         checkedIf <- mapM checkStmt ifb
+        -- New scope for the "else" block.
         pop
         push
         checkedElse <- mapM checkStmt elseb
         pop
-        return $ AST.IfStatement checkedCond checkedIf checkedElse
+        return $ TAST.IfStatement checkedCond checkedIf checkedElse
   where badReturnMsg = "return type does not match function signature"
-        badReturn = TypeError badReturnMsg p
-        getType = snd . AST.annotation
+        badReturn = throwC $ TypeError badReturnMsg p
         checkStmt = flip typeCheckStatement retty
+        getType = TAST.exprType . contents
+        throw = throwC . flip TypeError p
         checkDecl (AST.ValueDeclaration ty' name) = do
             ty <- typeCheckType (Annotated ty' p)
             zoom variables $ Scope.insert name ty
             return ty
 
-typeCheckExpr :: AST.PositionedExpression -> Checker AST.TypedExpression
-typeCheckExpr (AST.EW expr p) = (\(e, t) -> AST.EW e (p, t)) <$> case expr of
-    AST.IntLiteral i -> return (AST.IntLiteral i, Signed 64)
-    AST.UIntLiteral u -> return (AST.UIntLiteral u, Unsigned 64)
-    AST.FloatLiteral f -> return (AST.FloatLiteral f, Floating DoublePrec)
-    AST.StringLiteral s -> return (AST.StringLiteral s, Pointer (Unsigned 8))
-    AST.Reference lvalue -> do (ty, lv) <- typeCheckLValue p lvalue
-                               return (AST.Reference lv, Pointer ty)
+typeCheckExpr :: Annotated AST.Expression
+              -> Checker (Annotated TAST.Expression)
+typeCheckExpr (Annotated expr p) =
+        (\(e, t) -> Annotated (TAST.Expression e t) p) <$> case expr of
+    AST.IntLiteral i -> return (TAST.IntLiteral i, Signed 64)
+    AST.UIntLiteral u -> return (TAST.UIntLiteral u, Unsigned 64)
+    AST.FloatLiteral f -> return (TAST.FloatLiteral f, Floating DoublePrec)
+    AST.StringLiteral s -> return (TAST.StringLiteral s, Pointer (Unsigned 8))
+    AST.Reference lvalue -> do 
+        (ty, lv) <- typeCheckLValue p lvalue
+        return (TAST.Reference $ contents lv, Pointer ty)
     AST.Binop lhs op rhs -> do
         checkedLhs <- typeCheckExpr lhs
         checkedRhs <- typeCheckExpr rhs
         ty <- inferBinopType p (exprTy checkedLhs) op (exprTy checkedRhs)
-        return (AST.Binop checkedLhs op checkedRhs, ty)
+        return (TAST.Binop checkedLhs op checkedRhs, ty)
     AST.FunctionCall f args -> do
         checkedF <- typeCheckExpr f
         checkedArgs <- mapM typeCheckExpr args
@@ -155,17 +169,17 @@ typeCheckExpr (AST.EW expr p) = (\(e, t) -> AST.EW e (p, t)) <$> case expr of
             Function args ret -> do
                 when (map exprTy checkedArgs /= args) $
                     throw "argument types do not match function signature"
-                return (AST.FunctionCall checkedF checkedArgs, ret)
+                return (TAST.FunctionCall checkedF checkedArgs, ret)
             _ -> throw "cannot call non-function"
     AST.Cast to from -> do
         checkedFrom <- typeCheckExpr from
         toTy <- typeCheckType to
-        return (AST.Cast to checkedFrom, toTy)
+        return (TAST.Cast checkedFrom, toTy)
     AST.LValueExpr lv -> do
         (ty, checkedLv) <- typeCheckLValue p lv
-        return (AST.LValueExpr checkedLv, ty)
-  where exprTy = snd . AST.annotation
-        throw msg = throwC $ TypeError msg p
+        return (TAST.LValueExpr $ contents checkedLv, ty)
+  where exprTy = TAST.exprType . contents
+        throw = throwC . flip TypeError p
 
 comparisonOps = Set.fromList ["==", "!=", ">=", "<=", ">", "<"]
 logicalOps = Set.fromList ["&&", "||"]
@@ -198,21 +212,22 @@ inferBinopType p _ s _ = throwC $
     TypeError "type checker doesn't know how to deal with these yet" p
 
 typeCheckLValue :: SourcePos
-                -> AST.PositionedLValue
-                -> Checker (Type, AST.TypedLValue)
-typeCheckLValue p lv = case lv of
+                -> AST.LValue
+                -> Checker (Type, Annotated TAST.LValue)
+typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
     AST.Variable s -> do
-        expr <- zoom variables $ Scope.lookup s p
-        return (expr, AST.Variable s)
+        ty <- zoom variables $ Scope.lookup s p
+        return (ty, TAST.Variable s)
     AST.Dereference e -> do
-        expr <- typeCheckExpr e
-        return (exprTy expr, AST.Dereference expr)
+        expr <- typeCheckExpr (Annotated e p)
+        return (exprTy expr, TAST.Dereference expr)
     AST.FieldAccess e n -> do
-        str <- typeCheckExpr e
+        str <- typeCheckExpr (Annotated e p)
         case exprTy str of 
-            Struct fields -> case List.lookup n fields of
+            Struct fields -> case lookupI n fields of
                 Nothing -> throw "no such field in struct"
-                Just ty -> return (ty, AST.FieldAccess str n)
+                Just (ty, i) -> return (ty, TAST.FieldAccess (contents str) i)
             _ -> throw "cannot access field of non-struct value"
-  where exprTy = snd . AST.annotation
+  where exprTy = TAST.exprType . contents
         throw msg = throwC $ TypeError msg p
+        lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]
