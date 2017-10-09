@@ -6,12 +6,23 @@ module AST ( Annotated (..)
            , Statement (..)
            , Type (..)
            , Expression (..)
-           , LValue (..)
-) where
+           , LValue (..) 
+           , ExpressionWith (..)
+           , PositionedExpression
+           , PositionedLValue
+           , TypedLValue
+           , PositionedStatement
+           , TypedStatement
+           , PositionedTopLevel
+           , TypedProgram
+           , TypedTopLevel
+           , Program
+           , TypedExpression ) where
 
 import qualified Text.Parsec.Pos as Pos
 
 import Error
+import qualified Environment as Env
 
 --
 -- Top-level syntax.
@@ -23,14 +34,20 @@ data FunctionSignature = FunctionSignature {
   , retty :: Annotated Type
 } deriving Show
 
-data TopLevel =
+type Program = [Annotated (TopLevel PositionedExpression)]
+type TypedProgram = [Annotated TypedTopLevel]
+
+data TopLevel e =
     StructDeclaration { structName :: String
                       , structMembers :: [Annotated ValueDeclaration] }
   | TypeDeclaration String
   | FunctionDecl FunctionSignature
   | FunctionDefinition { sig :: Annotated FunctionSignature
-                       , body :: Block }
+                       , body :: Block e }
   deriving Show
+
+type PositionedTopLevel = TopLevel PositionedExpression
+type TypedTopLevel = TopLevel TypedExpression
 
 --
 -- Statements.
@@ -39,21 +56,24 @@ data TopLevel =
 data ValueDeclaration = ValueDeclaration { ty :: Type
                                          , name :: String } deriving Show
 
-type Block = [Annotated Statement]
+type Block e = [Annotated (Statement e)]
 
-data Statement =
-    ExpressionStatement (Annotated Expression)
-  | Return (Annotated Expression)
+data Statement e =
+    ExpressionStatement e
+  | Return e
   | VoidReturn
-  | Assignment { leftOfEquals :: Annotated LValue
-               , rightOfEquals :: Annotated Expression }
+  | Assignment { leftOfEquals :: LValue e
+               , rightOfEquals :: e }
   | Declaration ValueDeclaration
   | CompoundDeclaration { declaredVariable :: Annotated ValueDeclaration
-                        , initialValue :: Annotated Expression }
-  | IfStatement { cond :: Annotated Expression
-                , ifBlock :: Block
-                , elseBlock :: Block }
+                        , initialValue :: e }
+  | IfStatement { cond :: e
+                , ifBlock :: Block e
+                , elseBlock :: Block e }
   deriving Show
+
+type PositionedStatement = Statement PositionedExpression
+type TypedStatement = Statement TypedExpression
 
 --
 -- Types.
@@ -69,25 +89,34 @@ data Type =
 -- Expressions.
 --
 
-data Expression =
+data Expression e =
     IntLiteral Integer
   | UIntLiteral Integer
   | FloatLiteral Double
   | StringLiteral String
-  | Reference (Annotated LValue)
-  | Binop { lhs :: Annotated Expression
+  | Reference (LValue e)
+  | Binop { lhs :: e
           , op :: String
-          , rhs :: Annotated Expression }
-  | FunctionCall { func :: Annotated Expression,
-                   callArgs :: [Annotated Expression] }
+          , rhs :: e }
+  | FunctionCall { func :: e,
+                   callArgs :: [e] }
   | Cast { toType :: Annotated Type
-         , value :: Annotated Expression }
-  | LValueExpr LValue
+         , value :: e }
+  | LValueExpr (LValue e)
   deriving Show
 
-data LValue =
+data LValue e =
     Variable String
-  | Dereference (Annotated Expression)
-  | FieldAccess { struct :: Annotated Expression
+  | Dereference e
+  | FieldAccess { struct :: e
                 , fieldName :: String }
   deriving Show
+
+data ExpressionWith a = EW { ewContents :: Expression (ExpressionWith a)
+                           , annotation :: a }
+  deriving Show
+
+type PositionedExpression = ExpressionWith Pos.SourcePos
+type TypedExpression = ExpressionWith (Pos.SourcePos, Env.Type)
+type PositionedLValue = LValue PositionedExpression
+type TypedLValue = LValue TypedExpression

@@ -16,14 +16,16 @@ extra-source-files:  README.md
 executable craeft-hs
   hs-source-dirs:      src
   main-is:             Main.hs
-  other-modules:       AST, Parser, Lexer, Error, Environment
+  other-modules:       AST, Parser, Lexer, Codegen, Error
+                     , Environment, TypeChecker, Scope
   default-language:    Haskell2010
   build-depends:
       base >= 4.7
     , parsec               >= 3.1
     , mtl                  >= 2.1.3
     , transformers         >= 0.3.0.0
-    , ansi-terminal        >= 0.7.1.1
+    , ansi-terminal        >= 0.6.0.0 && < 0.7
     , llvm-hs              >= 5.0.0
     , llvm-hs-pure         >= 5.0.0
     , containers           >= 0.5.7.1
+    , lens                 >= 4.0.0
