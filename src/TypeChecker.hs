@@ -26,19 +26,21 @@ makeLenses ''CheckerState
 
 type Checker a = CraeftMonad CheckerState a
 
-push :: Checker ()
-push = zoom types Scope.push >> zoom variables Scope.push
-
-pop :: Checker ()
-pop = zoom types Scope.pop >> zoom variables Scope.pop
+inNewScope :: Checker a -> Checker a
+inNewScope c = do zoom types Scope.push
+                  zoom variables Scope.push
+                  res <- c
+                  zoom types Scope.pop
+                  zoom variables Scope.pop
+                  return res
 
 signedTypes :: Map.Map String Type
 signedTypes = let fromInt i = ("I" ++ show i, Signed i)
-               in Map.fromList $ fromInt <$> [0..1024]
+               in Map.fromList $ map fromInt [1..1024]
 
 unsignedTypes :: Map.Map String Type
 unsignedTypes = let fromInt i = ("U" ++ show i, Unsigned i)
-                 in Map.fromList $ fromInt <$> [0..1024]
+                 in Map.fromList $ map fromInt [1..1024]
 
 floatTypes :: Map.Map String Type
 floatTypes = Map.fromList [ ("Float", Floating SinglePrec)
@@ -88,12 +90,12 @@ typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
         return $ TAST.FunctionDecl checkedSig
     AST.FunctionDefinition (Annotated sig _) body -> do
         checkedSig <- typeCheckSig sig
-        push
-        sequence_ [zoom variables $ Scope.insert name ty
-                      | (name, ty) <- TAST.args checkedSig]
-        checkedBody <- mapM (`typeCheckStatement` TAST.retty checkedSig) body
-        pop
-        return $ TAST.Function checkedSig checkedBody
+        inNewScope $ do
+            sequence_ [zoom variables $ Scope.insert name ty
+                          | (name, ty) <- TAST.args checkedSig]
+            let checkStmt s = typeCheckStatement s (TAST.retty checkedSig) 
+            checkedBody <- mapM checkStmt body
+            return $ TAST.Function checkedSig checkedBody
 
 typeCheckStatement :: Annotated AST.Statement
                    -> Type
@@ -127,14 +129,8 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         checkedCond <- typeCheckExpr cond
         when (getType checkedCond /= Unsigned 1) $
             throw "if condition must be U1"
-        -- New scope for the "if" block.
-        push
-        checkedIf <- mapM checkStmt ifb
-        -- New scope for the "else" block.
-        pop
-        push
-        checkedElse <- mapM checkStmt elseb
-        pop
+        checkedIf <- inNewScope $ mapM checkStmt ifb
+        checkedElse <- inNewScope $ mapM checkStmt elseb
         return $ TAST.IfStatement checkedCond checkedIf checkedElse
   where badReturnMsg = "return type does not match function signature"
         badReturn = throwC $ TypeError badReturnMsg p
