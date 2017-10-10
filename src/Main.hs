@@ -13,7 +13,7 @@ main :: IO ()
 main = do input <- getLine
           case runExcept (runParser input) of
                Left e -> prettyPrintError e
-               Right r -> print r
+               Right r -> putStrLn r
 
 runParser :: String -> CraeftExcept String
 runParser s = do parseResult <- Parser.parseTopLevel "[stdin]" s
