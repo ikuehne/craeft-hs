@@ -18,10 +18,7 @@ import qualified Text.Parsec.Pos as Pos
 import Error
 import qualified Environment as Env
 
---
--- Top-level syntax.
---
-
+-- | Function signatures: everything needed to call a function.
 data FunctionSignature = FunctionSignature {
     fnName :: String
   , args :: [Annotated ValueDeclaration]
@@ -30,6 +27,7 @@ data FunctionSignature = FunctionSignature {
 
 type Program = [Annotated TopLevel]
 
+-- | Top-level forms: forms that can appear outside of any other form.
 data TopLevel =
     StructDeclaration { structName :: String
                       , structMembers :: [Annotated ValueDeclaration] }
@@ -43,6 +41,7 @@ data TopLevel =
 -- Statements.
 --
 
+-- | Variable declarations.
 data ValueDeclaration = ValueDeclaration { ty :: Type
                                          , name :: String } deriving Show
 
@@ -54,7 +53,10 @@ data Statement =
   | VoidReturn
   | Assignment { leftOfEquals :: LValue
                , rightOfEquals :: Annotated Expression }
+  -- ^ A declaration consists of a type and a name.
   | Declaration ValueDeclaration
+  -- ^ A compound declaration is a type, a name, and an initial value for the
+  -- new variable.
   | CompoundDeclaration { declaredVariable :: Annotated ValueDeclaration
                         , initialValue :: Annotated Expression }
   | IfStatement { cond :: Annotated Expression
@@ -62,31 +64,32 @@ data Statement =
                 , elseBlock :: Block }
   deriving Show
 
---
--- Types.
---
-
+-- | The AST representation of a type--the way the type is named in Craeft.
 data Type =
     NamedType String
   | Void
   | Pointer (Annotated Type)
   deriving Show
 
+-- | Craeft expressions.
 --
--- Expressions.
---
-
+-- This AST includes no direct information on the types of expressions; see
+-- @TAST@ for one that does.
 data Expression =
     IntLiteral Integer
+  -- ^ Unsigned (i.e. non-negative) integer literals.
   | UIntLiteral Integer
   | FloatLiteral Double
   | StringLiteral String
+  -- ^ An application of the address-of (&) operator.
   | Reference LValue
+  -- ^ An application of a binary operator.
   | Binop { lhs :: Annotated Expression
           , op :: String
           , rhs :: Annotated Expression }
   | FunctionCall { func :: Annotated Expression,
                    callArgs :: [Annotated Expression] }
+  -- ^ A type cast.
   | Cast { toType :: Annotated Type
          , value :: Annotated Expression }
   | LValueExpr LValue
