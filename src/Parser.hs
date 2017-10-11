@@ -22,7 +22,7 @@ import Text.Parsec.Expr
 import Text.Parsec.Char
 import qualified AST
 import qualified Lexer
-import Error
+import Utility
 
 --
 -- Nicely wrapping everything.

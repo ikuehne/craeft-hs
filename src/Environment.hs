@@ -37,7 +37,7 @@ import qualified Data.Map as Map
 import Control.Lens
 import LLVM.AST.Operand (Operand)
 
-import Error
+import Utility
 import qualified Scope
 
 data Precision = SinglePrec | DoublePrec

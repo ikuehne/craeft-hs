@@ -8,14 +8,14 @@ Stability   : experimental
 
 The Craeft abstract syntax tree consists of a series of transparent algebraic
 data types, containing the information needed to run codegen and the typechecker
-as well as source-position annotations for error messages (see @Error@).
+as well as source-position annotations for error messages (see @Utility@).
 -}
 
 module AST where
 
 import qualified Text.Parsec.Pos as Pos
 
-import Error
+import Utility
 import qualified Environment as Env
 
 -- | Function signatures: everything needed to call a function.

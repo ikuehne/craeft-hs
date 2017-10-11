@@ -17,7 +17,7 @@ module Codegen where
 
 import qualified AST
 import qualified Environment as Env
-import Error
+import Utility
 
 import Control.Monad.Except
 import Control.Monad.State

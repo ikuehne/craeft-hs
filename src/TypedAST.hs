@@ -13,7 +13,7 @@ rather than syntactic references.
 module TypedAST where
 
 import Environment ( Type )
-import Error
+import Utility
 
 type Program = [Annotated TopLevel]
 

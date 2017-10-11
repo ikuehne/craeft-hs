@@ -27,7 +27,7 @@ import Control.Lens
 import Control.Monad.Except
 import Control.Monad.State
 
-import Error
+import Utility
 
 newtype ScopeState a = ScopeState { _scopes :: [Map.Map String a] }
 makeLenses ''ScopeState

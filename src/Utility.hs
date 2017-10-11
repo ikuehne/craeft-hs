@@ -1,5 +1,5 @@
 {-|
-Module      : Error
+Module      : Utility
 Description : Error handling and related utilities.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -7,13 +7,13 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
-module Error ( Annotated (..)
-             , Error (..)
-             , CraeftExcept
-             , throwC
-             , CraeftMonad
-             , SourcePos
-             , prettyPrintError ) where
+module Utility ( Annotated (..)
+               , Error (..)
+               , CraeftExcept
+               , throwC
+               , CraeftMonad
+               , SourcePos
+               , prettyPrintError ) where
 
 import System.Console.ANSI
 import System.IO

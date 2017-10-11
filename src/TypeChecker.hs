@@ -29,7 +29,7 @@ import qualified AST
 import qualified TypedAST as TAST
 import Environment ( Type (..)
                    , Precision (..) )
-import Error
+import Utility
 import qualified Scope
 
 -- | The state for the type checker.

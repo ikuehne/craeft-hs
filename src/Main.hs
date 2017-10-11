@@ -4,7 +4,7 @@ import qualified Parser
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State (evalStateT)
-import Error
+import Utility
 import qualified Environment
 import qualified TypeChecker as TC
 -- import qualified Codegen
