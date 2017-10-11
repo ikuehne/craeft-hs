@@ -7,7 +7,7 @@ import Control.Monad.Trans.State (evalStateT)
 import Utility
 import qualified Environment
 import qualified TypeChecker as TC
--- import qualified Codegen
+import qualified Codegen
 
 main :: IO ()
 main = do input <- getLine

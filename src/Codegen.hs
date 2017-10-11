@@ -15,7 +15,7 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 
 module Codegen where
 
-import qualified AST
+import qualified TypedAST as TAST
 import qualified Environment as Env
 import Utility
 
@@ -30,7 +30,6 @@ import qualified Data.Map as Map
 import Control.Lens
 import Control.Lens.Internal.Zoom ( Focusing )
 import LLVM.AST
-import Text.Parsec.Pos
 import qualified LLVM.AST.Type as LLTy
 import qualified LLVM.AST.Instruction as LLInstr
 import qualified LLVM.AST.Constant as LLConst
@@ -88,59 +87,51 @@ instr ins t = do ref <- UnName <$> fresh
 -- Expression codegen.
 --
 
-checkPtr :: SourcePos -> Env.Value -> Codegen Env.Value
-checkPtr _ v@(Env.Value (Env.Pointer _) _) = return v
-checkPtr p _ = throwC $ TypeError "cannot dereference non-pointer" p
-
 constInt :: Integer -> Operand
 constInt i = ConstantOperand (LLConst.Int 64 i)
 
-lvalueCodegen :: Annotated AST.LValue -> Codegen Env.Value
-lvalueCodegen a = case contents a of
-    AST.Variable s -> zoom symtab $ Env.lookupValue s p
-    AST.Dereference ptr -> exprCodegen ptr >>= checkPtr p
-    AST.FieldAccess str name -> do
-        val <- case contents str of
-            AST.LValueExpr l -> lvalueCodegen (Annotated l $ pos str)
-            _ -> throwC $ TypeError "cannot assign to r-value struct" p
-        case Env.ty val of
-            Env.Pointer (Env.Struct fields) -> do
-              (t, i) <- fromMaybe (throwC $ NameError "no such field" p)
-                                  (return <$> lookupWithIndex name fields)
-              let gep = GetElementPtr False (Env.value val) [constInt i] []
-              llt <- typeTranslation p $ Env.Pointer t
-              op <- instr gep llt
-              return $ Env.Value (Env.Pointer t) op
-            _ -> throwC $ TypeError "cannot look up field in non-sruct type" p
-  where lookupWithIndex n assoc =
-              lookup n $ (\((a, b), c) -> (a, (b, c))) <$> zip assoc [0..]
-        p = pos a
+lvalueCodegen :: Env.Type -> Annotated TAST.LValue -> Codegen Env.Value
+lvalueCodegen t a = case contents a of
+    TAST.Variable s -> zoom symtab $ Env.lookupValue s p
+    TAST.Dereference ptr referandTy ->
+        let expr = TAST.Expression (contents ptr) (Env.Pointer referandTy)
+         in exprCodegen (Annotated expr $ pos ptr)
+    TAST.FieldAccess str members i -> do
+        let structTy = Env.Struct members
+        val <- case TAST.exprContents (TAST.Expression str structTy) of
+            TAST.LValueExpr l -> lvalueCodegen (Env.Struct members)
+                                               (Annotated l p)
+            _ -> throw "cannot assign to r-value struct"
+        let gep = GetElementPtr False (Env.value val) [constInt i] []
+        llt <- typeTranslation p t
+        op <- instr gep llt
+        return $ Env.Value t op
+  where p = pos a
+        throw = throwC . flip TypeError p
                      
-exprCodegen :: Annotated AST.Expression -> Codegen Env.Value
-exprCodegen a = case contents a of
-    AST.IntLiteral i -> let t = Env.Signed 64
-                         in return $ Env.Value t (constInt i)
-    AST.UIntLiteral i -> let t = Env.Unsigned 64
-                         in return $ Env.Value t (constInt i)
-    AST.FloatLiteral f -> let t = Env.Floating Env.DoublePrec
-                              d = LLFloat.Double f
-                              o = ConstantOperand (LLConst.Float d)
-                           in return $ Env.Value t o
-    AST.StringLiteral s -> let t = Env.Pointer (Env.Unsigned 8)
-                               cs = LLConst.Int 8 . toInteger . fromEnum <$> s
+exprCodegen :: Annotated TAST.Expression -> Codegen Env.Value
+exprCodegen a = case TAST.exprContents $ contents a of
+    TAST.IntLiteral i -> return $ Env.Value ty (constInt i)
+    TAST.UIntLiteral i -> return $ Env.Value ty (constInt i)
+    TAST.FloatLiteral f -> -- Construct the corresponding LLVM constant first.
+                           let d = LLFloat.Double f
+                               o = ConstantOperand (LLConst.Float d)
+                           in return $ Env.Value ty o
+    TAST.StringLiteral s -> let t = Env.Pointer (Env.Unsigned 8)
+                                cs = LLConst.Int 8 . toInteger . fromEnum <$> s
                             in do llt <- typeTranslation p t
                                   let c = LLConst.Array llt cs
                                       o = ConstantOperand c
                                   return $ Env.Value t o
-    AST.Reference l -> lvalueCodegen l
-    AST.Binop l op r -> do
+    TAST.Reference l -> lvalueCodegen ty (Annotated l p)
+    TAST.Binop l op r -> do
         lhs <- exprCodegen l
         rhs <- exprCodegen r
         let msg = "no such op: " ++ op
         f <- fromMaybe (throwC $ TypeError msg p)
                        (return <$> Map.lookup op ops)
         f p lhs rhs
-    AST.FunctionCall f args -> do
+    TAST.FunctionCall f args -> do
         func' <- exprCodegen f
         let func = Right $ Env.value func'
 
@@ -156,6 +147,7 @@ exprCodegen a = case contents a of
     _ -> undefined
   where p = pos a
         ops = Map.fromList [("+", addValues)]
+        ty = TAST.exprType $ contents a
 
 addValues :: SourcePos -> Env.Value -> Env.Value -> Codegen Env.Value
 addValues p l r = case (Env.ty l, Env.ty r) of
@@ -191,13 +183,6 @@ typeTranslation p (Env.Function ts t) = do
     ret <- typeTranslation p t
     return $ LLTy.FunctionType ret args False
 typeTranslation p Env.Void = return LLTy.VoidType
-
-typeCodegen :: Annotated AST.Type -> Codegen Env.Type
-typeCodegen a = case contents a of
-    AST.NamedType name -> zoom symtab $ Env.lookupType name p
-    AST.Void -> return Env.Void
-    AST.Pointer t -> Env.Pointer <$> typeCodegen t
-  where p = pos a
 
 -- 
 -- Statement codegen.

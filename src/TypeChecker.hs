@@ -149,39 +149,54 @@ typeCheckStatement :: Annotated AST.Statement
                    -> Checker (Annotated TAST.Statement)
 typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
     AST.ExpressionStatement e ->
+        -- Simple: just unwrap and type-check the expression.
         TAST.ExpressionStmt . contents <$> typeCheckExpr e
     AST.Return e -> do
+        -- Type-check the expression to be returned,
         checkedExpr <- typeCheckExpr e
-        when (exprToType checkedExpr /= retty) badReturn
+        -- and check that it matches the expected return type.
+        when (exprToType checkedExpr /= retty) $
+            throw "returned value does not match expected return type"
         return $ TAST.Return checkedExpr
     AST.VoidReturn -> do
-        when (retty /= Void) badReturn
+        -- Check that we expected a void return.
+        when (retty /= Void) $
+            throw "void return, but return type is not void"
         return TAST.VoidReturn
     AST.Assignment lhs rhs -> do
+        -- Check the left-hand side
         (lhsTy, checkedLhs) <- typeCheckLValue p lhs
+        -- and the right hand side.
         checkedRhs <- typeCheckExpr rhs
+        -- Make sure they're compatible.
         when (lhsTy /= exprToType checkedRhs) $
             throw "assigning to variable of different type"
         return $ TAST.Assignment checkedLhs checkedRhs
     AST.Declaration decl ->
         TAST.Declaration (AST.name decl) <$> checkDecl decl
     AST.CompoundDeclaration decl e -> do
+        -- Get the declared type,
         expected <- checkDecl $ contents decl
+        -- and the type of the initializer expression.
         found <- typeCheckExpr e
+        -- Check that they match.
         when (expected /= exprToType found) $
             throw "compound assignment type mismatch"
+        -- Extract the variable name from the declaration.
         let name = AST.name $ contents decl
         return $ TAST.CompoundDeclaration name expected found
     AST.IfStatement cond ifb elseb -> do
+        -- Type-check the condition.
         checkedCond <- typeCheckExpr cond
+        -- Make sure it's a boolean.
         when (exprToType checkedCond /= Unsigned 1) $
             throw "if condition must be U1"
+        -- Check the `if` block (in a new scope).
         checkedIf <- inNewScope $ mapM checkStmt ifb
+        -- Check the `else` block (in a new scope).
         checkedElse <- inNewScope $ mapM checkStmt elseb
         return $ TAST.IfStatement checkedCond checkedIf checkedElse
-  where badReturnMsg = "return type does not match function signature"
-        badReturn = throwC $ TypeError badReturnMsg p
-        checkStmt = flip typeCheckStatement retty
+  where checkStmt = flip typeCheckStatement retty
         throw = throwC . flip TypeError p
         checkDecl (AST.ValueDeclaration ty' name) = do
             ty <- typeCheckType (Annotated ty' p)
@@ -290,14 +305,20 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
         ty <- zoom variables $ Scope.lookup s p
         return (ty, TAST.Variable s)
     AST.Dereference e -> do
-        expr <- typeCheckExpr (Annotated e p)
-        return (exprToType expr, TAST.Dereference expr)
+        Annotated (TAST.Expression contents ty) p' <-
+            typeCheckExpr (Annotated e p)
+        t <- case ty of
+            Pointer t -> return t
+            _ -> throw "cannot dereference non-pointer type"
+        return (ty, TAST.Dereference (Annotated contents p') t)
     AST.FieldAccess e n -> do
         str <- typeCheckExpr (Annotated e p)
         case exprToType str of 
             Struct fields -> case lookupI n fields of
                 Nothing -> throw "no such field in struct"
-                Just (ty, i) -> return (ty, TAST.FieldAccess (contents str) i)
+                Just (ty, i) ->
+                    let strExpr = TAST.exprContents $ contents str
+                     in return (ty, TAST.FieldAccess strExpr fields i)
             _ -> throw "cannot access field of non-struct value"
   where throw msg = throwC $ TypeError msg p
         lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]

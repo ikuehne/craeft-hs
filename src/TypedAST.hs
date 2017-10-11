@@ -63,7 +63,8 @@ data Expression = Expression { exprContents :: ExpressionContents
   deriving Show
 
 data LValue = Variable String
-            | Dereference (Annotated Expression)
-            | FieldAccess { struct :: Expression
+            | Dereference (Annotated ExpressionContents) Type
+            | FieldAccess { structExpr :: ExpressionContents
+                          , structMembers :: [(String, Type)]
                           , fieldIdx :: Integer }
   deriving Show
