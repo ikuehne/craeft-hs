@@ -1,3 +1,12 @@
+{-|
+Module      : Lexer
+Description : A Parsec-based lexical analyzer for Craeft.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+-}
+
 module Lexer where
 
 import qualified Data.Char as Char

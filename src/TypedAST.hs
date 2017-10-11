@@ -1,3 +1,15 @@
+{-|
+Module      : TAST
+Description : The typed Craeft Abstract Syntax Tree.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+
+Very similar to the @AST@, but with types represented as concrete Craeft types
+rather than syntactic references.
+-}
+
 module TypedAST where
 
 import Environment ( Type )

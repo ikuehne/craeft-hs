@@ -1,3 +1,16 @@
+{-|
+Module      : AST
+Description : The untyped Craeft Abstract Syntax Tree.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+
+The Craeft abstract syntax tree consists of a series of transparent algebraic
+data types, containing the information needed to run codegen and the typechecker
+as well as source-position annotations for error messages (see @Error@).
+-}
+
 module AST where
 
 import qualified Text.Parsec.Pos as Pos

@@ -1,3 +1,12 @@
+{-|
+Module      : Error
+Description : Error handling and related utilities.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+-}
+
 module Error ( Annotated (..)
              , Error (..)
              , CraeftExcept

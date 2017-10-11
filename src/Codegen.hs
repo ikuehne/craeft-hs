@@ -1,3 +1,14 @@
+{-|
+Module      : Codegen
+Description : Codegen from the typed AST (@TAST@) to LLVM.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+
+Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
+-}
+
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}

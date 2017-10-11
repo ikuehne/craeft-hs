@@ -1,3 +1,15 @@
+{-|
+Module      : TypeChecker
+Description : The Craeft type-checking phase.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+
+Converts an untyped @AST@ to a typed @TAST@, and checks that types are
+consistent in the process.
+-}
+
 {-# LANGUAGE TemplateHaskell #-}
 
 module TypeChecker ( Checker

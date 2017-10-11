@@ -1,3 +1,14 @@
+{-|
+Module      : Scope
+Description : An abstract mapping type, allowing pushing and popping.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+
+Designed to implement Craeft scopes.
+-}
+
 {-# LANGUAGE TemplateHaskell #-}
 
 module Scope ( Scope 

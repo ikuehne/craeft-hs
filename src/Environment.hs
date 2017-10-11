@@ -1,3 +1,16 @@
+{-|
+Module      : Environment
+Description : A mapping suitable for describing Craeft scopes.
+Copyright   : (c) Ian Kuehne, 2017
+License     : GPL-3
+Maintainer  : ikuehne@caltech.edu
+Stability   : experimental
+
+Contains two @Scope@s, one for types and another for values.  Will soon be
+removed in favor of more specialized @Scope@ uses (see @TypeChecker for
+example).
+-}
+
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
