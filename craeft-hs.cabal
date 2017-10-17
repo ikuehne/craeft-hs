@@ -18,6 +18,7 @@ executable craeft-hs
   main-is:             Main.hs
   other-modules:
       AST
+    , Driver
     , Parser
     , Lexer
     , Codegen

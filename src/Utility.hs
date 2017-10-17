@@ -29,6 +29,7 @@ data Error = ParseError String SourcePos
            | NameError String SourcePos
            | TypeError String SourcePos
            | InternalError String
+           | UsageError String
   deriving Show
 
 type SourcePos = Pos.SourcePos
@@ -43,6 +44,7 @@ prettyPrintError (ParseError msg p) = prettyPrintHelper "parse error" msg p
 prettyPrintError (NameError msg p) = prettyPrintHelper "name error" msg p
 prettyPrintError (TypeError msg p) = prettyPrintHelper "type error" msg p
 prettyPrintError (InternalError msg) = printWithHeader "internal error" msg
+prettyPrintError (UsageError msg) = printWithHeader "usage error" msg
 
 headerColor :: IO ()
 headerColor = hSetSGR stderr [SetColor Foreground Vivid Red]

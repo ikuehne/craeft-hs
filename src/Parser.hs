@@ -57,7 +57,7 @@ parseTopLevel :: ParseFn (Annotated AST.TopLevel)
 parseTopLevel = craeftParse $ annotate topLevel
 
 parseProgram :: ParseFn AST.Program
-parseProgram = craeftParse $ many $ annotate topLevel
+parseProgram = craeftParse $ many (annotate topLevel) <* eof
 
 --
 -- Parsing expressions.
@@ -88,9 +88,17 @@ term = do p <- getPosition
             <|> positionExpr signed
             <|> positionExpr float
             <|> positionExpr Parser.string
+            <|> positionExpr functionCall
             <|> do lv <- AST.LValueExpr <$> (dereference <|> variable)
                    return $ Annotated lv p
             <?> "simple expression"
+
+functionCall :: SourcePos -> ExpressionParser
+functionCall pos = flip Annotated pos <$>
+    do fname <- AST.LValueExpr . AST.Variable <$> Lexer.identifier
+       (do args <- Lexer.parens $ Lexer.commaSep expr
+           return $ AST.FunctionCall (Annotated fname pos) args)
+          <|> return fname
 
 lvalue :: Parser AST.LValue
 lvalue = dereference <|> variable <|> fieldAccess <?> "lvalue"
@@ -142,8 +150,8 @@ typeParser = do p <- getPosition
 -- Parsing statements.
 statement :: Parser AST.Statement
 statement = compoundDeclaration
-        <|> assignment
         <|> AST.ExpressionStatement <$> expr
+        <|> assignment
         <|> returnStatement
         -- <|> ifStatement
         <?> "statement"
@@ -222,4 +230,4 @@ functionDefinition = annotate functionSignature >>= fnDeclOrDef
 fnDeclOrDef :: Annotated AST.FunctionSignature -> Parser AST.TopLevel
 fnDeclOrDef sig = (AST.FunctionDefinition sig <$> Lexer.braces block
                     <?> "function definition")
-                <|> return (AST.FunctionDecl $ contents sig)
+                <|> (Lexer.semi >> return (AST.FunctionDecl $ contents sig))

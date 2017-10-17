@@ -12,10 +12,7 @@ consistent in the process.
 
 {-# LANGUAGE TemplateHaskell #-}
 
-module TypeChecker ( Checker
-                   , CheckerState
-                   , typeCheckTopLevel
-                   , initState ) where
+module TypeChecker ( typeCheck ) where
 
 import Control.Monad ( sequence_
                      , when )
@@ -24,6 +21,7 @@ import qualified Data.Set as Set
 import qualified Data.List as List
 
 import Control.Lens
+import Control.Monad.Trans.State (evalStateT)
 
 import qualified AST
 import qualified TypedAST as TAST
@@ -85,8 +83,8 @@ initState :: CheckerState
 initState = CheckerState initialTypes Scope.empty
 
 -- | Type-check a program.
-typeCheck :: AST.Program -> Checker TAST.Program
-typeCheck = mapM typeCheckTopLevel
+typeCheck :: AST.Program -> CraeftExcept TAST.Program
+typeCheck program = evalStateT (mapM typeCheckTopLevel program) initState
 
 -- | Convert an AST type to a Craeft type.
 typeCheckType :: Annotated AST.Type -> Checker Type
