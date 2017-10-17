@@ -22,18 +22,31 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State (StateT)
 
-data Annotated a = Annotated { contents :: a, pos :: SourcePos }
-  deriving Show
+--
+-- Pure, monadic error handling.
+--
 
+-- | The possible types of errors.
+--
+-- Every type of error contains a @String@ message, which should *not* be
+-- capitalized or contain any kind of header or position information; a colored
+-- header and clang-style pointer into the source can be added with
+-- @prettyPrintError@ below.
 data Error = ParseError String SourcePos
            | NameError String SourcePos
            | TypeError String SourcePos
+           -- ^ These are errors that the user should never see.  Try to avoid
+           -- using them...
            | InternalError String
            | UsageError String
   deriving Show
 
 type SourcePos = Pos.SourcePos
+
+-- | An exception monad with @Error@ as the error type.
 type CraeftExcept = Except Error
+
+-- | A state/exception monad transformer stack with @Error@ as the error type.
 type CraeftMonad s a = StateT s CraeftExcept a
 
 throwC :: Error -> CraeftMonad s a
@@ -45,6 +58,12 @@ prettyPrintError (NameError msg p) = prettyPrintHelper "name error" msg p
 prettyPrintError (TypeError msg p) = prettyPrintHelper "type error" msg p
 prettyPrintError (InternalError msg) = printWithHeader "internal error" msg
 prettyPrintError (UsageError msg) = printWithHeader "usage error" msg
+
+-- | Data @Annotated@ with a source position.
+data Annotated a = Annotated { contents :: a, pos :: SourcePos }
+  deriving Show
+
+
 
 headerColor :: IO ()
 headerColor = hSetSGR stderr [SetColor Foreground Vivid Red]

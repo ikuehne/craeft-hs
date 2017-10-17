@@ -194,8 +194,11 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         -- Check the `else` block (in a new scope).
         checkedElse <- inNewScope $ mapM checkStmt elseb
         return $ TAST.IfStatement checkedCond checkedIf checkedElse
-  where checkStmt = flip typeCheckStatement retty
+  where -- Type-check a statement in the current function.
+        checkStmt = flip typeCheckStatement retty
+        -- Throw a type error with the given message.
         throw = throwC . flip TypeError p
+        -- Type-check a variable declaration and add it to the scope.
         checkDecl (AST.ValueDeclaration ty' name) = do
             ty <- typeCheckType (Annotated ty' p)
             zoom variables $ Scope.insert name ty
