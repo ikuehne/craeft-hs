@@ -48,20 +48,12 @@ type Checker a = CraeftMonad CheckerState a
 --
 
 -- | Run the given Checker monad in a fresh scope.
---
--- I.e., push a scope before running it, and pop the scope after running it.
-inNewScope :: Checker a -> Checker a
-inNewScope c = do zoom types Scope.push
-                  zoom variables Scope.push
-                  res <- c
-                  zoom types Scope.pop
-                  zoom variables Scope.pop
-                  return res
+nested :: Checker a -> Checker a
+nested = Scope.nested types . Scope.nested variables
 
 -- | An initial map of signed types (I1-I1024).
 signedTypes :: Map.Map String Type
-signedTypes = let fromInt i = ("I" ++ show i, Signed i)
-               in Map.fromList $ map fromInt [1..1024]
+signedTypes = Map.fromList [("I" ++ show i, Signed i) | i <- [1..1024]]
 
 -- | An initial map of unsigned types (U1-U1024).
 unsignedTypes :: Map.Map String Type
@@ -132,7 +124,7 @@ typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
         return $ TAST.FunctionDecl checkedSig
     AST.FunctionDefinition (Annotated sig _) body -> do
         checkedSig <- typeCheckSig sig
-        inNewScope $ do
+        nested $ do
             sequence_ [zoom variables $ Scope.insert name ty
                           | (name, ty) <- TAST.args checkedSig]
             let checkStmt s = typeCheckStatement s (TAST.retty checkedSig) 
@@ -189,9 +181,9 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         when (exprToType checkedCond /= Unsigned 1) $
             throw "if condition must be U1"
         -- Check the `if` block (in a new scope).
-        checkedIf <- inNewScope $ mapM checkStmt ifb
+        checkedIf <- nested $ mapM checkStmt ifb
         -- Check the `else` block (in a new scope).
-        checkedElse <- inNewScope $ mapM checkStmt elseb
+        checkedElse <- nested $ mapM checkStmt elseb
         return $ TAST.IfStatement checkedCond checkedIf checkedElse
   where -- Type-check a statement in the current function.
         checkStmt = flip typeCheckStatement retty
@@ -314,11 +306,11 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
     AST.FieldAccess e n -> do
         str <- typeCheckExpr (Annotated e p)
         case exprToType str of 
-            Struct fields -> case lookupI n fields of
-                Nothing -> throw "no such field in struct"
-                Just (ty, i) ->
-                    let strExpr = TAST.exprContents $ contents str
-                     in return (ty, TAST.FieldAccess strExpr fields i)
+            Struct fields -> do
+                (ty, i) <- liftMaybe (TypeError "no such field in struct" p)
+                                     (lookupI n fields)
+                let strExpr = TAST.exprContents $ contents str
+                return (ty, TAST.FieldAccess strExpr fields i)
             _ -> throw "cannot access field of non-struct value"
   where throw msg = throwC $ TypeError msg p
         lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]

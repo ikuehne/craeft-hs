@@ -11,16 +11,19 @@ module Utility ( Annotated (..)
                , Error (..)
                , CraeftExcept
                , throwC
+               , liftMaybe
                , CraeftMonad
                , SourcePos
                , prettyPrintError ) where
 
+import Data.Maybe (maybe)
 import System.Console.ANSI
 import System.IO
-import qualified Text.Parsec.Pos as Pos
+
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State (StateT)
+import qualified Text.Parsec.Pos as Pos
 
 --
 -- Pure, monadic error handling.
@@ -51,6 +54,12 @@ type CraeftMonad s a = StateT s CraeftExcept a
 
 throwC :: Error -> CraeftMonad s a
 throwC = lift . throwE 
+
+-- | Bring a @Maybe@ into a @CraeftMonad@
+--
+-- Throw the given error on @Nothing@.
+liftMaybe :: Error -> Maybe a -> CraeftMonad s a
+liftMaybe e = maybe (throwC e) return
 
 prettyPrintError :: Error -> IO ()
 prettyPrintError (ParseError msg p) = prettyPrintHelper "parse error" msg p

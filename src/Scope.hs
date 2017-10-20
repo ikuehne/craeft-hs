@@ -10,13 +10,19 @@ Designed to implement Craeft scopes.
 -}
 
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
 
-module Scope ( Scope 
+module Scope ( -- * Basic data types.
+               Scope 
              , ScopeState
+               -- * Creating new scopes.
              , Scope.empty
              , make
+               -- * Nesting scopes.
+             , nested
              , push
              , pop
+               -- * Map operations.
              , Scope.lookup
              , insert ) where
 
@@ -39,6 +45,17 @@ make m = ScopeState [m]
 
 empty :: ScopeState a
 empty = make Map.empty
+
+-- | Execute the given action using the given scope lens.
+nested :: forall a b s. Lens' s (ScopeState b)
+       -> CraeftMonad s a
+       -> CraeftMonad s a
+nested scope action = do zoom scope push
+                         result <- action `catchError` \e -> do
+                             zoom scope pop
+                             throwC e
+                         zoom scope pop
+                         return result
 
 pushMap :: Map.Map String a -> Scope a ()
 pushMap m = scopes %= (m :)

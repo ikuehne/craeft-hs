@@ -114,22 +114,20 @@ codegen program = _llmod <$> execStateT (mapM toplevelCodegen program) initLLVM
 -- Generating names.
 --
 
-recordName :: String -> Int -> Codegen Name
-recordName n i = names %= Map.insert n next >> return (mkName $ n ++ show next)
-  where next = i + 1
-
+-- | Generate a new, unique name based on the given string.
 uniqueName :: String -> Codegen Name
 uniqueName n = uses names (Map.lookup n) >>= recordName n . fromMaybe 0
+  where recordName :: String -> Int -> Codegen Name
+        recordName n i = do let next = i + 1
+                            names %= Map.insert n next
+                            return $ mkName $ n ++ show next
 
-fresh :: Codegen Word
-fresh = uses count succ
-
+-- | Get the current @BlockState@.
 current :: Codegen BlockState
 current = do c <- use currentBlock
              bs <- use blocks
-             case Map.lookup c bs of
-               Just x -> return x
-               Nothing -> throwC . InternalError $ "No such block: " ++ show c
+             let err = InternalError $ "No such block: " ++ show c
+             liftMaybe err $ Map.lookup c bs
 
 modifyBlock :: (BlockState -> BlockState) -> Codegen ()
 modifyBlock f = do active <- use currentBlock
@@ -139,7 +137,7 @@ voidInstr :: Instruction -> Codegen ()
 voidInstr ins = modifyBlock (stack %~ (Do ins :))
 
 instr :: Instruction -> Type -> Codegen Operand
-instr ins t = do ref <- UnName <$> fresh
+instr ins t = do ref <- UnName <$> uses count succ
                  modifyBlock (stack %~ ((ref := ins) :))
                  return (LocalReference t ref)
 
@@ -171,11 +169,7 @@ switchBlock = (currentBlock .=)
 --
 -- After completion, remains in that block but the scope is popped.
 inBlock :: Name -> Codegen a -> Codegen a
-inBlock n c = do switchBlock n
-                 zoom symtab Scope.push
-                 ret <- c
-                 zoom symtab Scope.pop
-                 return ret
+inBlock n c = switchBlock n >> Scope.nested symtab c
 
 -- | Sort the blocks on index.
 sortBlocks :: [(Name, BlockState)] -> [(Name, BlockState)]
@@ -192,12 +186,10 @@ addCgGlobals st = do
     llmod %= \s -> s { moduleDefinitions = defs ++ newDefs }
   where newDefs = GlobalDefinition <$> _globals st
 
--- | Convert a @BlcokState@ to an llvm-hs @BasicBlock@.
+-- | Convert a @BlockState@ to an llvm-hs @BasicBlock@.
 makeBlock :: (Name, BlockState) -> BasicBlock
 makeBlock (l, BlockState _ s t) = BasicBlock l (reverse s) (maketerm t)
-  where
-    maketerm (Just x) = x
-    maketerm Nothing = error $ "Block has no terminator: " ++ show l
+  where maketerm = fromMaybe (error $ "Block has no terminator: " ++ show l)
 
 -- | Define a new module-level function.
 define ::  Type -> String -> [(Type, Name)] -> [BasicBlock] -> LLVM ()
@@ -270,8 +262,7 @@ exprCodegen a = case TAST.exprContents $ contents a of
               { LLGlobal.name = globalName
               , LLGlobal.isConstant = True
               , LLGlobal.type' = arrayType
-              , LLGlobal.initializer = Just $
-                  LLConst.Array LLTy.i8 cs }
+              , LLGlobal.initializer = Just $ LLConst.Array LLTy.i8 cs }
             globalOp = LLConst.GlobalReference (ptr arrayType) globalName
             gepIdxs = [LLConst.Int 64 0, LLConst.Int 64 0]
             gep = LLConst.GetElementPtr False globalOp gepIdxs
@@ -285,8 +276,7 @@ exprCodegen a = case TAST.exprContents $ contents a of
         rhs <- exprCodegen r
         let msg = "no such op: " ++ op
         -- Use the @ops@ map to lookup that operation.
-        f <- fromMaybe (throwC $ TypeError msg p)
-                       (return <$> Map.lookup op ops)
+        f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
         f p ty lhs rhs
     TAST.FunctionCall f args -> do
         (funcTy, func) <- exprCodegen f
