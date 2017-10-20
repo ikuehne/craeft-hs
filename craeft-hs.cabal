@@ -23,8 +23,8 @@ executable craeft-hs
     , Lexer
     , Codegen
     , Utility
-    , Environment
     , TypeChecker
+    , Types
     , Scope
     , TypedAST
   default-language:    Haskell2010

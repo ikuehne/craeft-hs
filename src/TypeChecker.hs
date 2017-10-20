@@ -25,8 +25,7 @@ import Control.Monad.Trans.State (evalStateT)
 
 import qualified AST
 import qualified TypedAST as TAST
-import Environment ( Type (..)
-                   , Precision (..) )
+import Types
 import Utility
 import qualified Scope
 

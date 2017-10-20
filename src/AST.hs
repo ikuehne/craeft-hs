@@ -16,7 +16,6 @@ module AST where
 import qualified Text.Parsec.Pos as Pos
 
 import Utility
-import qualified Environment as Env
 
 -- | Function signatures: everything needed to call a function.
 data FunctionSignature = FunctionSignature {

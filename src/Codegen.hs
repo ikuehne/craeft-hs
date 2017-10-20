@@ -13,11 +13,13 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 
 module Codegen ( codegen ) where
 
 import qualified TypedAST as TAST
-import qualified Environment as Env
+import qualified Types
+import qualified Scope
 import Utility
 
 import Debug.Trace (traceM)
@@ -50,10 +52,8 @@ data CodegenState = CodegenState {
     _currentBlock :: Name
     -- ^ A list of blocks produced in this Codgen.
  , _blocks       :: Map.Map Name BlockState
-    -- ^ An @Environment@ for codegen.
-    --
-    -- Should be superceded by a more direct use of @Scope@ soon.
- , _symtab       :: Env.EnvironmentState
+    -- ^ A @Scope@ for codegen.
+ , _symtab       :: Scope.ScopeState Value
     -- ^ The number of blocks in this @Codegen@.
  , _blockCount   :: Int
     -- ^ The register we are up to.
@@ -65,12 +65,14 @@ data CodegenState = CodegenState {
    -- A multiset of @Names@ used thus far in this codegen.
  , _names        :: Map.Map String Int }
 
+type Value = (Types.Type, Operand)
+
 -- | Create a new instance of @CodegenState@.
 --
 -- Use the given top-level environment.  In the current pattern, a new
 -- @CodegenState@ is used for each function, so we need to preserve the
--- @EnvironmentState@ between functions for top-level definitions.
-initCG :: Env.EnvironmentState -> CodegenState
+-- @ScopeState@ between functions for top-level definitions.
+initCG :: Scope.ScopeState Value -> CodegenState
 initCG st = CodegenState { _currentBlock = Name "main"
                          , _blocks = Map.empty
                          , _symtab = st
@@ -86,7 +88,7 @@ data BlockState
                , _term  :: Maybe (Named Terminator) }
 
 data LlvmState = LlvmState { _llmod :: Module
-                           , _env :: Env.EnvironmentState }
+                           , _env :: Scope.ScopeState Value }
 
 -- All of these are lensey.
 makeLenses ''BlockState
@@ -99,7 +101,7 @@ type LLVM a = CraeftMonad LlvmState a
 -- | The initial @LlvmState@ for a fresh program.
 initLLVM :: LlvmState
 initLLVM = LlvmState { _llmod = defaultModule
-                     , _env = Env.initialEnv }
+                     , _env = Scope.empty }
  
 
 -- | The codegen entry point.
@@ -170,9 +172,9 @@ switchBlock = (currentBlock .=)
 -- After completion, remains in that block but the scope is popped.
 inBlock :: Name -> Codegen a -> Codegen a
 inBlock n c = do switchBlock n
-                 zoom symtab Env.push
+                 zoom symtab Scope.push
                  ret <- c
-                 zoom symtab Env.pop
+                 zoom symtab Scope.pop
                  return ret
 
 -- | Sort the blocks on index.
@@ -221,25 +223,25 @@ constInt :: Integer -> Operand
 constInt i = ConstantOperand (LLConst.Int 64 i)
 
 -- | Codegen an l-value, returning a pointer to the referenced value.
-lvalueCodegen :: Env.Type -> Annotated TAST.LValue -> Codegen Env.Value
+lvalueCodegen :: Types.Type -> Annotated TAST.LValue -> Codegen Value
 lvalueCodegen t a = case contents a of
     -- Variables are already stored as pointers.
-    TAST.Variable s -> zoom symtab $ Env.lookupValue s p
+    TAST.Variable s -> zoom symtab $ Scope.lookup s p
     -- Codegen'ing a pointer to a dereference is just codegen'ing the referand.
     TAST.Dereference ptr referandTy ->
-        let expr = TAST.Expression (contents ptr) (Env.Pointer referandTy)
+        let expr = TAST.Expression (contents ptr) (Types.Pointer referandTy)
          in exprCodegen (Annotated expr $ pos ptr)
     -- Get a pointer to the struct, and this is just a GEP.
     TAST.FieldAccess str members i -> do
-        let structTy = Env.Struct members
-        val <- case TAST.exprContents (TAST.Expression str structTy) of
-            TAST.LValueExpr l -> lvalueCodegen (Env.Struct members)
+        let structTy = Types.Struct members
+        (_, val) <- case TAST.exprContents (TAST.Expression str structTy) of
+            TAST.LValueExpr l -> lvalueCodegen (Types.Struct members)
                                                (Annotated l p)
             _ -> throw "cannot assign to r-value struct"
-        let gep = GetElementPtr False (Env.value val) [constInt i] []
+        let gep = GetElementPtr False val [constInt i] []
             llt = translateType t
         op <- instr gep llt
-        return $ Env.Value t op
+        return (t, op)
   where p = pos a
         throw = throwC . flip TypeError p
 
@@ -248,15 +250,13 @@ ptr :: Type -> Type
 ptr ty = PointerType ty (AddrSpace 0)
 
 -- | Codegen an expression as an operand/type pair.
-exprCodegen :: Annotated TAST.Expression -> Codegen Env.Value
+exprCodegen :: Annotated TAST.Expression -> Codegen Value
 exprCodegen a = case TAST.exprContents $ contents a of
     -- Literals are just constant operands.
-    TAST.IntLiteral i -> return $ Env.Value ty (constInt i)
-    TAST.UIntLiteral i -> return $ Env.Value ty (constInt i)
-    TAST.FloatLiteral f -> -- Construct the corresponding LLVM constant first.
-                           let d = LLFloat.Double f
-                               o = ConstantOperand (LLConst.Float d)
-                           in return $ Env.Value ty o
+    TAST.IntLiteral i -> return (ty, constInt i)
+    TAST.UIntLiteral i -> return (ty, constInt i)
+    TAST.FloatLiteral f ->
+        return (ty, ConstantOperand $ LLConst.Float $ LLFloat.Double f)
     -- String literals need to be represented as globals.
     TAST.StringLiteral s -> do
         globalCount <- length <$> use globals
@@ -277,7 +277,7 @@ exprCodegen a = case TAST.exprContents $ contents a of
             gep = LLConst.GetElementPtr False globalOp gepIdxs
             o = ConstantOperand gep
         globals %= (globalLiteral :)
-        return $ Env.Value ty o
+        return (ty, o)
     -- L-value codegen gets the address, so just use that.
     TAST.Reference l -> lvalueCodegen ty (Annotated l p)
     TAST.Binop l op r -> do
@@ -289,55 +289,56 @@ exprCodegen a = case TAST.exprContents $ contents a of
                        (return <$> Map.lookup op ops)
         f p ty lhs rhs
     TAST.FunctionCall f args -> do
-        func' <- exprCodegen f
-        let func = Right $ Env.value func'
+        (funcTy, func) <- exprCodegen f
 
         -- Codegen each of the arguments.
         args'' <- mapM exprCodegen args
         -- Zip 'em with their metadata (for now, nothing).
-        let args' = [(Env.value a, []) | a <- args'']
-            inst = LLInstr.Call Nothing CConv.C [] func args' [] []
+        let args' = [(op, []) | (_, op) <- args'']
+            inst = LLInstr.Call Nothing CConv.C [] (Right func) args' [] []
             llretty = translateType ty
-        Env.Value ty <$> instr inst llretty
+        op <- instr inst llretty
+        return (ty, op)
     -- Just dereference the codegen'ed l-value.
     TAST.LValueExpr lv -> do
-        cged <- lvalueCodegen ty (Annotated lv p)
-        case Env.ty cged of
-            Env.Pointer referandTy -> do
-                let inst = LLInstr.Load False (Env.value cged) Nothing 0 []
+        (lvTy, lvOp) <- lvalueCodegen ty (Annotated lv p)
+        case lvTy of
+            Types.Pointer referandTy -> do
+                let inst = LLInstr.Load False lvOp Nothing 0 []
                     llty = translateType ty
-                Env.Value ty <$> instr inst llty
+                (ty,) <$> instr inst llty
             -- (Functions are a special case.)
-            Env.Function _ _ -> return cged
+            Types.Function _ _ -> return (lvTy, lvOp)
     other -> error $ show other
   where p = pos a
         ops = Map.fromList [("+", addValues)]
         ty = TAST.exprType $ contents a
 
-type Operator = SourcePos -> Env.Type -> Env.Value -> Env.Value
-             -> Codegen Env.Value
+type Operator = SourcePos -> Types.Type -> Value -> Value
+             -> Codegen Value
 
 -- The addition operator.
 addValues :: Operator
-addValues p t l r = Env.Value t <$> instr addition (translateType t)
-  where addition = LLInstr.Add False False (Env.value l) (Env.value r) []
+addValues p t (Types.Signed _, l) (Types.Signed _, r) =
+    (t, ) <$> instr addition (translateType t)
+  where addition = LLInstr.Add False False l r []
 
 --
 -- Type codegen.
 --
 
--- | Convert an @Env@ type to a @Codegen@ type.
-translateType :: Env.Type -> Type
+-- | Convert a Craeft type to an LLVM type.
+translateType :: Types.Type -> Type
 -- Simple types.
-translateType (Env.Signed i) = LLTy.IntegerType $ fromIntegral i
-translateType (Env.Unsigned i) = LLTy.IntegerType $ fromIntegral i
-translateType (Env.Floating Env.SinglePrec) = LLTy.float
-translateType (Env.Floating Env.DoublePrec) = LLTy.double
-translateType Env.Void = LLTy.VoidType
-translateType (Env.Struct fields) =
+translateType (Types.Signed i) = LLTy.IntegerType $ fromIntegral i
+translateType (Types.Unsigned i) = LLTy.IntegerType $ fromIntegral i
+translateType (Types.Floating Types.SinglePrec) = LLTy.float
+translateType (Types.Floating Types.DoublePrec) = LLTy.double
+translateType Types.Void = LLTy.VoidType
+translateType (Types.Struct fields) =
     LLTy.StructureType False $ map (translateType . snd) fields
-translateType (Env.Pointer t) = ptr $ translateType t
-translateType (Env.Function ts t) =
+translateType (Types.Pointer t) = ptr $ translateType t
+translateType (Types.Function ts t) =
     LLTy.FunctionType (translateType t) (map translateType ts) False
 
 -- 
@@ -348,27 +349,31 @@ stmtCodegen :: Annotated TAST.Statement -> Codegen ()
 stmtCodegen (Annotated stmt p) = case stmt of
     TAST.ExpressionStmt e -> void $ exprCodegen (Annotated e p)
     TAST.Return e -> do
-        retval <- Env.value <$> exprCodegen e
+        retval <- snd <$> exprCodegen e
         terminate $ LLInstr.Ret (Just retval) []
     TAST.VoidReturn -> terminate $ LLInstr.Ret Nothing []
     TAST.Assignment lhs rhs -> do
-        lhsAddr <- Env.value <$> lvalueCodegen (Env.Pointer $ exprTy rhs) lhs
-        rhsExpr <- Env.value <$> exprCodegen rhs
+        (_, lhsAddr) <- lvalueCodegen (Types.Pointer $ exprTy rhs) lhs
+        (_, rhsExpr) <- exprCodegen rhs
         voidInstr $ LLInstr.Store False lhsAddr rhsExpr Nothing 0 []
     TAST.Declaration n ty -> void $ declare n ty
     TAST.CompoundDeclaration n ty init -> do
         -- Declare the new variable,
         space <- declare n ty
         -- codegen the initial value,
-        initVal <- Env.value <$> exprCodegen init
+        (_, initVal) <- exprCodegen init
         -- and do the assignment.
         voidInstr $ LLInstr.Store False space initVal Nothing 0 []
     TAST.IfStatement cond ifB elseB -> do
+        -- We need three blocks: one for if the condition is true,
         ifthen <- addBlock "if.then"
+        -- one for otherwise,
         ifelse <- addBlock "if.else"
+        -- and a third for them to merge at.
         ifmerge <- addBlock "if.merge"
 
-        test <- Env.value <$> exprCodegen cond
+        -- Codegen the predicate.
+        (_, test) <- exprCodegen cond
         terminate $ LLInstr.CondBr test ifthen ifelse []
         
         inBlock ifthen $
@@ -382,7 +387,7 @@ stmtCodegen (Annotated stmt p) = case stmt of
         declare n ty = do
             let llty = translateType ty
             alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
-            zoom symtab $ Env.insertValue n (Env.Value (Env.Pointer ty) alloca)
+            zoom symtab $ Scope.insert n (Types.Pointer ty, alloca)
             return alloca
  
 toplevelCodegen :: Annotated TAST.TopLevel -> LLVM ()
@@ -414,13 +419,13 @@ toplevelCodegen (Annotated tl p) = case tl of
                     fty = LLTy.FunctionType llretty argtys False 
                 return (ptr fty, llretty, argtys)
             let op = ConstantOperand $ LLConst.GlobalReference fty $ mkName name
-                val = Env.Value (Env.Function (map snd args) retty) op
-            zoom env $ Env.insertValue name val
+                val = (Types.Function (map snd args) retty, op)
+            zoom env $ Scope.insert name val
             return (zip argtys (argName . fst <$> args), llretty)
         declareArg (str, ty) = do
             let llty = translateType ty
                 argRegister = LocalReference llty $ argName str
             alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
-            zoom symtab $ Env.insertValue str (Env.Value (Env.Pointer ty) alloca)
+            zoom symtab $ Scope.insert str (Types.Pointer ty, alloca)
             voidInstr $ LLInstr.Store False alloca argRegister Nothing 0 []
         argName str = mkName $ str ++ "##arg"
