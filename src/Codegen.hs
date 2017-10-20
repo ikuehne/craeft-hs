@@ -169,7 +169,7 @@ switchBlock = (currentBlock .=)
 --
 -- After completion, remains in that block but the scope is popped.
 inBlock :: Name -> Codegen a -> Codegen a
-inBlock n c = switchBlock n >> Scope.nested symtab c
+inBlock n c = switchBlock n >> Scope.nested (zoom symtab) c
 
 -- | Sort the blocks on index.
 sortBlocks :: [(Name, BlockState)] -> [(Name, BlockState)]
@@ -235,7 +235,7 @@ lvalueCodegen t a = case contents a of
         op <- instr gep llt
         return (t, op)
   where p = pos a
-        throw = throwC . flip TypeError p
+        throw = throwError . flip TypeError p
 
 -- | A simple pointer in the default address space.
 ptr :: Type -> Type
@@ -398,7 +398,7 @@ toplevelCodegen (Annotated tl p) = case tl of
           cgState <- initCG <$> use env
           let maybeSt = runStateT cg cgState
           case runIdentity $ runExceptT maybeSt of
-              Left err -> throwC err
+              Left err -> throwError err
               Right res -> return res
         codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
         codegenSig (TAST.Sig name args retty) = do

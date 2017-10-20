@@ -1,16 +1,15 @@
 {-|
 Module      : Scope
-Description : An abstract mapping type, allowing pushing and popping.
+Description : An abstract mapping type, allowing nested maps.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
 Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 
-Designed to implement Craeft scopes.
+Used to represent Craeft scopes.
 -}
 
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RankNTypes #-}
 
 module Scope ( -- * Basic data types.
                Scope 
@@ -20,13 +19,13 @@ module Scope ( -- * Basic data types.
              , make
                -- * Nesting scopes.
              , nested
-             , push
-             , pop
                -- * Map operations.
              , Scope.lookup
              , insert ) where
 
 import Control.Applicative
+import qualified Data.List as List
+import Data.Map (Map)
 import qualified Data.Map as Map
 
 import Control.Lens
@@ -35,50 +34,49 @@ import Control.Monad.State
 
 import Utility
 
-newtype ScopeState a = ScopeState { _scopes :: [Map.Map String a] }
+newtype ScopeState a = ScopeState { _scopes :: [Map String a] }
 makeLenses ''ScopeState
 
 type Scope a r = CraeftMonad (ScopeState a) r
 
-make :: Map.Map String a -> ScopeState a
+-- | Create a new scope starting with the given map.
+make :: Map String a -> ScopeState a
 make m = ScopeState [m]
 
+-- | An empty scope.
 empty :: ScopeState a
 empty = make Map.empty
 
--- | Execute the given action using the given scope lens.
-nested :: forall a b s. Lens' s (ScopeState b)
-       -> CraeftMonad s a
-       -> CraeftMonad s a
-nested scope action = do zoom scope push
-                         result <- action `catchError` \e -> do
-                             zoom scope pop
-                             throwC e
-                         zoom scope pop
-                         return result
+-- | Execute the given action in a fresh scope using the given scope accessor.
+--
+-- Exception-safe: if the action throws, the scope will still be popped.  We
+-- expose this as the only way to nest scopes because we want to ensure that
+-- every @push@ has a corresponding @pop@.
+nested :: (Scope a () -> CraeftMonad s ()) -> CraeftMonad s r -> CraeftMonad s r
+nested scope action = scope push >> bracketed (scope pop) action
 
-pushMap :: Map.Map String a -> Scope a ()
-pushMap m = scopes %= (m :)
-
-push :: Scope a ()
-push = pushMap Map.empty
-
-emptyPop = throwC $ InternalError "attempt to pop empty environment"
-
-pop :: Scope a ()
-pop = do ss <- use scopes
-         case ss of [] -> emptyPop
-                    s:ss -> put (ScopeState ss)
-
+-- | Look up the given name in the scope, starting at the innermost scope.
 lookup :: String -> SourcePos -> Scope a a
 lookup k p = do ss <- use scopes
                 let results = Map.lookup k <$> ss
-                case foldr (<|>) Nothing results of
-                                    Nothing -> throwC $ NameError msg p
-                                    Just x  -> return x
+                liftMaybe (NameError msg p) $ foldr (<|>) Nothing results
   where msg = "name not found in scope: " ++ k
 
+-- | Insert a new value in the innermost scope.
 insert :: String -> a -> Scope a ()
-insert k v = do ss <- use scopes
-                case ss of [] -> emptyPop
-                           s:ss -> put (ScopeState $ Map.insert k v s : ss)
+insert k v = whenNonEmpty $ \s ss -> put (ScopeState $ Map.insert k v s : ss)
+
+--
+-- Lower-level operations.
+--
+
+push :: Scope a ()
+push = scopes %= (Map.empty :)
+
+pop :: Scope a ()
+pop = whenNonEmpty $ const $ put . ScopeState
+
+-- | Do an operation on the head and tail of a non-empty @Scope@.
+whenNonEmpty :: (Map String a -> [Map String a] -> Scope a r) -> Scope a r
+whenNonEmpty f = use scopes >>= liftMaybe emptyPop . List.uncons >>= uncurry f
+  where emptyPop = InternalError "attempt to pop empty environment"

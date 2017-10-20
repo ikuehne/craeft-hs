@@ -10,7 +10,7 @@ Stability   : experimental
 module Utility ( Annotated (..)
                , Error (..)
                , CraeftExcept
-               , throwC
+               , bracketed
                , liftMaybe
                , CraeftMonad
                , SourcePos
@@ -20,6 +20,7 @@ import Data.Maybe (maybe)
 import System.Console.ANSI
 import System.IO
 
+import Control.Monad.Except (MonadError, catchError, throwError)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State (StateT)
@@ -52,14 +53,21 @@ type CraeftExcept = Except Error
 -- | A state/exception monad transformer stack with @Error@ as the error type.
 type CraeftMonad s a = StateT s CraeftExcept a
 
-throwC :: Error -> CraeftMonad s a
-throwC = lift . throwE 
+-- | Safely run a cleanup action after another action.
+--
+-- Ensures that cleanup is run regardless of whether the other action succeeds
+-- or fails.
+bracketed :: MonadError e m => m () -> m a -> m a
+bracketed cleanup action = do
+    ret <- action `catchError` (\e -> cleanup >> throwError e)
+    cleanup
+    return ret
 
 -- | Bring a @Maybe@ into a @CraeftMonad@
 --
 -- Throw the given error on @Nothing@.
 liftMaybe :: Error -> Maybe a -> CraeftMonad s a
-liftMaybe e = maybe (throwC e) return
+liftMaybe e = maybe (throwError e) return
 
 prettyPrintError :: Error -> IO ()
 prettyPrintError (ParseError msg p) = prettyPrintHelper "parse error" msg p

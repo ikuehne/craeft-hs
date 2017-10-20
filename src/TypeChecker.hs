@@ -21,6 +21,7 @@ import qualified Data.Set as Set
 import qualified Data.List as List
 
 import Control.Lens
+import Control.Monad.Except (throwError)
 import Control.Monad.Trans.State (evalStateT)
 
 import qualified AST
@@ -49,7 +50,7 @@ type Checker a = CraeftMonad CheckerState a
 
 -- | Run the given Checker monad in a fresh scope.
 nested :: Checker a -> Checker a
-nested = Scope.nested types . Scope.nested variables
+nested = Scope.nested (zoom types) . Scope.nested (zoom variables)
 
 -- | An initial map of signed types (I1-I1024).
 signedTypes :: Map.Map String Type
@@ -145,12 +146,12 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         checkedExpr <- typeCheckExpr e
         -- and check that it matches the expected return type.
         when (exprToType checkedExpr /= retty) $
-            throw "returned value does not match expected return type"
+            throw p "returned value does not match expected return type"
         return $ TAST.Return checkedExpr
     AST.VoidReturn -> do
         -- Check that we expected a void return.
         when (retty /= Void) $
-            throw "void return, but return type is not void"
+            throw p "void return, but return type is not void"
         return TAST.VoidReturn
     AST.Assignment lhs rhs -> do
         -- Check the left-hand side
@@ -159,7 +160,7 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         checkedRhs <- typeCheckExpr rhs
         -- Make sure they're compatible.
         when (lhsTy /= exprToType checkedRhs) $
-            throw "assigning to variable of different type"
+            throw p "assigning to variable of different type"
         return $ TAST.Assignment checkedLhs checkedRhs
     AST.Declaration decl ->
         TAST.Declaration (AST.name decl) <$> checkDecl decl
@@ -170,7 +171,7 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         found <- typeCheckExpr e
         -- Check that they match.
         when (expected /= exprToType found) $
-            throw "compound assignment type mismatch"
+            throw p "compound assignment type mismatch"
         -- Extract the variable name from the declaration.
         let name = AST.name $ contents decl
         return $ TAST.CompoundDeclaration name expected found
@@ -179,7 +180,7 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         checkedCond <- typeCheckExpr cond
         -- Make sure it's a boolean.
         when (exprToType checkedCond /= Unsigned 1) $
-            throw "if condition must be U1"
+            throw p "if condition must be U1"
         -- Check the `if` block (in a new scope).
         checkedIf <- nested $ mapM checkStmt ifb
         -- Check the `else` block (in a new scope).
@@ -187,8 +188,6 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         return $ TAST.IfStatement checkedCond checkedIf checkedElse
   where -- Type-check a statement in the current function.
         checkStmt = flip typeCheckStatement retty
-        -- Throw a type error with the given message.
-        throw = throwC . flip TypeError p
         -- Type-check a variable declaration and add it to the scope.
         checkDecl (AST.ValueDeclaration ty' name) = do
             ty <- typeCheckType (Annotated ty' p)
@@ -226,9 +225,9 @@ typeCheckExpr (Annotated expr p) =
         case exprToType checkedF of
             Function args ret -> do
                 when (map exprToType checkedArgs /= args) $
-                    throw "argument types do not match function signature"
+                    throw p "argument types do not match function signature"
                 return (TAST.FunctionCall checkedF checkedArgs, ret)
-            _ -> throw "cannot call non-function"
+            _ -> throw p "cannot call non-function"
     -- Use the result type of the cast.
     AST.Cast toType fromExpr -> do
         checkedFrom <- typeCheckExpr fromExpr
@@ -240,8 +239,6 @@ typeCheckExpr (Annotated expr p) =
     AST.LValueExpr lv -> do
         (ty, checkedLv) <- typeCheckLValue p lv
         return (TAST.LValueExpr $ contents checkedLv, ty)
-  where -- Throw a type error at our position with the given message.
-        throw = throwC . flip TypeError p
 
 -- Some useful divisions of the operators.  Each of these sets has the same way
 -- of calculating the result types.
@@ -264,11 +261,11 @@ inferBinopType :: SourcePos -> Type -> String -> Type -> Checker Type
 inferBinopType p (Signed l) s (Signed r) 
   | s `Set.member` comparisonOps = return $ Unsigned 1
   | s `Set.member` logicalOps =
-      throwC $ TypeError "cannot perform logical operation between integers" p
+      throw p "cannot perform logical operation between integers"
   | s `Set.member` Set.union bitwiseOps arithmeticOps =
       return $ Signed $ max l r
-  | otherwise =
-        throwC $ InternalError $ "type checker received unrecognized op" ++ s
+  | otherwise = throwError $
+        InternalError $ "type checker received unrecognized op" ++ s
 -- Signed/unsigned operations coerced to signed/signed operations.
 inferBinopType p lhs@(Signed _) s (Unsigned r) =
     inferBinopType p lhs s (Signed r)
@@ -277,13 +274,13 @@ inferBinopType p (Unsigned l) s rhs@(Signed _) =
 inferBinopType p (Unsigned l) s (Unsigned r)
   | s `Set.member` comparisonOps = return $ Unsigned 1
   | s `Set.member` logicalOps =
-      throwC $ TypeError "cannot perform logical operation between integers" p
+      throw p "cannot perform logical operation between integers"
   | s `Set.member` Set.union bitwiseOps arithmeticOps =
       return $ Unsigned $ max l r
-  | otherwise =
-        throwC $ InternalError $ "type checker received unrecognized op" ++ s
-inferBinopType p _ s _ = throwC $
-    TypeError "type checker doesn't know how to deal with these yet" p
+  | otherwise = throwError $
+        InternalError $ "type checker received unrecognized op" ++ s
+inferBinopType p _ s _ = throw p
+    "type checker doesn't know how to deal with these yet"
 
 -- | Type-check an l-value.
 --
@@ -301,7 +298,7 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
             typeCheckExpr (Annotated e p)
         t <- case ty of
             Pointer t -> return t
-            _ -> throw "cannot dereference non-pointer type"
+            _ -> throw p "cannot dereference non-pointer type"
         return (ty, TAST.Dereference (Annotated contents p') t)
     AST.FieldAccess e n -> do
         str <- typeCheckExpr (Annotated e p)
@@ -311,6 +308,8 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
                                      (lookupI n fields)
                 let strExpr = TAST.exprContents $ contents str
                 return (ty, TAST.FieldAccess strExpr fields i)
-            _ -> throw "cannot access field of non-struct value"
-  where throw msg = throwC $ TypeError msg p
-        lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]
+            _ -> throw p "cannot access field of non-struct value"
+  where lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]
+
+throw :: SourcePos -> String -> Checker a
+throw p e = throwError $ TypeError e p
