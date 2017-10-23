@@ -13,7 +13,7 @@ module Utility ( Annotated (..)
                , bracketed
                , liftMaybe
                , CraeftMonad
-               , SourcePos
+               , module Text.Parsec.Pos
                , prettyPrintError ) where
 
 import Data.Maybe (maybe)
@@ -24,7 +24,7 @@ import Control.Monad.Except (MonadError, catchError, throwError)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State (StateT)
-import qualified Text.Parsec.Pos as Pos
+import Text.Parsec.Pos
 
 --
 -- Pure, monadic error handling.
@@ -44,8 +44,6 @@ data Error = ParseError String SourcePos
            | InternalError String
            | UsageError String
   deriving Show
-
-type SourcePos = Pos.SourcePos
 
 -- | An exception monad with @Error@ as the error type.
 type CraeftExcept = Except Error
@@ -96,9 +94,9 @@ putln = hPutStrLn stderr
 
 prettyPrintHelper :: String -> String -> SourcePos -> IO ()
 prettyPrintHelper header msg pos = do 
-    put $ Pos.sourceName pos ++ ":" 
-    put $ show (Pos.sourceLine pos) ++ ":"
-    put $ show (Pos.sourceColumn pos) ++ ": "
+    put $ sourceName pos ++ ":" 
+    put $ show (sourceLine pos) ++ ":"
+    put $ show (sourceColumn pos) ++ ": "
     printWithHeader header msg
 
 printWithHeader :: String -> String -> IO ()

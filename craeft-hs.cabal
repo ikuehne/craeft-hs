@@ -13,10 +13,10 @@ build-type:          Simple
 cabal-version:       >=1.10
 extra-source-files:  README.md
 
-executable craeft-hs
-  hs-source-dirs:      src
-  main-is:             Main.hs
-  other-modules:
+library
+  hs-source-dirs:      lib
+  include-dirs:        lib
+  exposed-modules:
       AST
     , Driver
     , Parser
@@ -39,21 +39,28 @@ executable craeft-hs
     , containers           >= 0.5.7.1
     , lens                 >= 4.0.0
 
-test-suite lib-test
-  type:              exitcode-stdio-1.0
-  hs-source-dirs:
-      test
-    , src
-  main-is:           ScopeTest.hs
+executable craeft
+  hs-source-dirs:      src
+  main-is:             Main.hs
+  default-language:    Haskell2010
   build-depends:
       base                 >= 4.7
-    , parsec               >= 3.1
-    , mtl                  >= 2.1.3
     , transformers         >= 0.3.0.0
-    , ansi-terminal        >= 0.6.0.0 && < 0.7
     , llvm-hs              >= 5.0.0
     , llvm-hs-pure         >= 5.0.0
+    , craeft-hs
+
+test-suite lib-test
+  type:              exitcode-stdio-1.0
+  hs-source-dirs:    test
+  main-is:           Main.hs
+  other-modules:
+      ScopeTest
+  build-depends:
+      base                 >= 4.7
+    , mtl                  >= 2.1.3
+    , transformers         >= 0.3.0.0
     , containers           >= 0.5.7.1
-    , lens                 >= 4.0.0
     , QuickCheck           >= 2.0.0
+    , craeft-hs
   default-language:  Haskell2010

@@ -1,8 +1,7 @@
-module Main where
+module ScopeTest where
 
-import Utility hiding ( SourcePos )
+import Utility
 import Scope
-import Text.Parsec.Pos
 
 import Control.Monad ( liftM3 )
 import Control.Monad.State
@@ -25,5 +24,3 @@ prop_lookupEmptyErrors s p =
      in case runExcept res of Left _ -> True
                               _ -> False
 
-
-main = quickCheck prop_lookupEmptyErrors
