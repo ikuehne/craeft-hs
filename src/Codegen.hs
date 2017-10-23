@@ -210,10 +210,6 @@ addDefn d = do
 -- Expression codegen.
 --
 
--- | Create an operand from a constant @Integer@.
-constInt :: Integer -> Operand
-constInt i = ConstantOperand (LLConst.Int 64 i)
-
 -- | Codegen an l-value, returning a pointer to the referenced value.
 lvalueCodegen :: Types.Type -> Annotated TAST.LValue -> Codegen Value
 lvalueCodegen t a = case contents a of
@@ -222,7 +218,7 @@ lvalueCodegen t a = case contents a of
     -- Codegen'ing a pointer to a dereference is just codegen'ing the referand.
     TAST.Dereference ptr referandTy ->
         let expr = TAST.Expression (contents ptr) (Types.Pointer referandTy)
-         in exprCodegen (Annotated expr $ pos ptr)
+         in (t,) <$> exprCodegen (Annotated expr $ pos ptr)
     -- Get a pointer to the struct, and this is just a GEP.
     TAST.FieldAccess str members i -> do
         let structTy = Types.Struct members
@@ -237,23 +233,18 @@ lvalueCodegen t a = case contents a of
   where p = pos a
         throw = throwError . flip TypeError p
 
--- | A simple pointer in the default address space.
-ptr :: Type -> Type
-ptr ty = PointerType ty (AddrSpace 0)
-
 -- | Codegen an expression as an operand/type pair.
-exprCodegen :: Annotated TAST.Expression -> Codegen Value
+exprCodegen :: Annotated TAST.Expression -> Codegen Operand
 exprCodegen a = case TAST.exprContents $ contents a of
     -- Literals are just constant operands.
-    TAST.IntLiteral i -> return (ty, constInt i)
-    TAST.UIntLiteral i -> return (ty, constInt i)
+    TAST.IntLiteral i -> return $ constInt i
+    TAST.UIntLiteral i -> return $ constInt i
     TAST.FloatLiteral f ->
-        return (ty, ConstantOperand $ LLConst.Float $ LLFloat.Double f)
+        return $ ConstantOperand $ LLConst.Float $ LLFloat.Double f
     -- String literals need to be represented as globals.
     TAST.StringLiteral s -> do
         globalCount <- length <$> use globals
-        let llt = translateType ty
-            globalName = mkName $ "##strLiteral" ++ show globalCount
+        let globalName = mkName $ "##strLiteral" ++ show globalCount
             nullTerminated = s ++ "\0"
             cs = LLConst.Int 8 . toInteger . fromEnum <$> nullTerminated
             arrayType = LLTy.ArrayType (fromIntegral $ length nullTerminated)
@@ -268,49 +259,48 @@ exprCodegen a = case TAST.exprContents $ contents a of
             gep = LLConst.GetElementPtr False globalOp gepIdxs
             o = ConstantOperand gep
         globals %= (globalLiteral :)
-        return (ty, o)
+        return o
     -- L-value codegen gets the address, so just use that.
-    TAST.Reference l -> lvalueCodegen ty (Annotated l p)
+    TAST.Reference l -> snd <$> lvalueCodegen ty (Annotated l p)
     TAST.Binop l op r -> do
         lhs <- exprCodegen l
         rhs <- exprCodegen r
         let msg = "no such op: " ++ op
+            lty = TAST.exprType $ contents l
+            rty = TAST.exprType $ contents r
         -- Use the @ops@ map to lookup that operation.
         f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
-        f p ty lhs rhs
+        f p ty (lty, lhs) (lty, rhs)
     TAST.FunctionCall f args -> do
-        (funcTy, func) <- exprCodegen f
+        func <- exprCodegen f
 
         -- Codegen each of the arguments.
         args'' <- mapM exprCodegen args
         -- Zip 'em with their metadata (for now, nothing).
-        let args' = [(op, []) | (_, op) <- args'']
+        let args' = zip args'' $ repeat []
             inst = LLInstr.Call Nothing CConv.C [] (Right func) args' [] []
-            llretty = translateType ty
-        op <- instr inst llretty
-        return (ty, op)
+        instr inst llty
     -- Just dereference the codegen'ed l-value.
     TAST.LValueExpr lv -> do
         (lvTy, lvOp) <- lvalueCodegen ty (Annotated lv p)
         case lvTy of
-            Types.Pointer referandTy -> do
+            Types.Pointer referandTy ->
                 let inst = LLInstr.Load False lvOp Nothing 0 []
-                    llty = translateType ty
-                (ty,) <$> instr inst llty
+                 in instr inst llty
             -- (Functions are a special case.)
-            Types.Function _ _ -> return (lvTy, lvOp)
+            Types.Function _ _ -> return lvOp
     other -> error $ show other
   where p = pos a
         ops = Map.fromList [("+", addValues)]
         ty = TAST.exprType $ contents a
+        llty = translateType ty
 
-type Operator = SourcePos -> Types.Type -> Value -> Value
-             -> Codegen Value
+type Operator = SourcePos -> Types.Type -> Value -> Value -> Codegen Operand
 
 -- The addition operator.
 addValues :: Operator
 addValues p t (Types.Signed _, l) (Types.Signed _, r) =
-    (t, ) <$> instr addition (translateType t)
+    instr addition (translateType t)
   where addition = LLInstr.Add False False l r []
 
 --
@@ -331,27 +321,24 @@ translateType (Types.Pointer t) = ptr $ translateType t
 translateType (Types.Function ts t) =
     LLTy.FunctionType (translateType t) (map translateType ts) False
 
--- 
--- Statement codegen.
---
-
+-- | Statement codegen.
 stmtCodegen :: Annotated TAST.Statement -> Codegen ()
 stmtCodegen (Annotated stmt p) = case stmt of
     TAST.ExpressionStmt e -> void $ exprCodegen (Annotated e p)
     TAST.Return e -> do
-        retval <- snd <$> exprCodegen e
+        retval <- exprCodegen e
         terminate $ LLInstr.Ret (Just retval) []
     TAST.VoidReturn -> terminate $ LLInstr.Ret Nothing []
     TAST.Assignment lhs rhs -> do
         (_, lhsAddr) <- lvalueCodegen (Types.Pointer $ exprTy rhs) lhs
-        (_, rhsExpr) <- exprCodegen rhs
+        rhsExpr <- exprCodegen rhs
         voidInstr $ LLInstr.Store False lhsAddr rhsExpr Nothing 0 []
     TAST.Declaration n ty -> void $ declare n ty
     TAST.CompoundDeclaration n ty init -> do
         -- Declare the new variable,
         space <- declare n ty
         -- codegen the initial value,
-        (_, initVal) <- exprCodegen init
+        initVal <- exprCodegen init
         -- and do the assignment.
         voidInstr $ LLInstr.Store False space initVal Nothing 0 []
     TAST.IfStatement cond ifB elseB -> do
@@ -363,7 +350,7 @@ stmtCodegen (Annotated stmt p) = case stmt of
         ifmerge <- addBlock "if.merge"
 
         -- Codegen the predicate.
-        (_, test) <- exprCodegen cond
+        test <- exprCodegen cond
         terminate $ LLInstr.CondBr test ifthen ifelse []
         
         inBlock ifthen $
@@ -379,7 +366,7 @@ stmtCodegen (Annotated stmt p) = case stmt of
             alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
             zoom symtab $ Scope.insert n (Types.Pointer ty, alloca)
             return alloca
- 
+
 toplevelCodegen :: Annotated TAST.TopLevel -> LLVM ()
 toplevelCodegen (Annotated tl p) = case tl of
     TAST.Function sig body -> do
@@ -419,3 +406,15 @@ toplevelCodegen (Annotated tl p) = case tl of
             zoom symtab $ Scope.insert str (Types.Pointer ty, alloca)
             voidInstr $ LLInstr.Store False alloca argRegister Nothing 0 []
         argName str = mkName $ str ++ "##arg"
+
+--
+-- Low-level LLVM utilities.
+--
+
+-- | A simple pointer in the default address space.
+ptr :: Type -> Type
+ptr ty = PointerType ty (AddrSpace 0)
+
+-- | Create an operand from a constant @Integer@.
+constInt :: Integer -> Operand
+constInt i = ConstantOperand (LLConst.Int 64 i)
