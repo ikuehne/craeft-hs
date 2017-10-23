@@ -1,5 +1,5 @@
 {-|
-Module      : AST
+Module      : Craeft.AST
 Description : The untyped Craeft Abstract Syntax Tree.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -11,11 +11,11 @@ data types, containing the information needed to run codegen and the typechecker
 as well as source-position annotations for error messages (see @Utility@).
 -}
 
-module AST where
+module Craeft.AST where
 
 import qualified Text.Parsec.Pos as Pos
 
-import Utility
+import           Craeft.Utility
 
 -- | Function signatures: everything needed to call a function.
 data FunctionSignature = FunctionSignature {

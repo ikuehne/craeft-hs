@@ -1,20 +1,20 @@
 module Main ( main ) where
 
-import Debug.Trace (traceM)
-import System.Environment ( getArgs )
-import System.IO ( FilePath )
+import           Debug.Trace (traceM)
+import           System.Environment ( getArgs )
+import           System.IO ( FilePath )
 import qualified System.IO as IO
-import System.Exit ( exitWith, ExitCode (..) )
+import           System.Exit ( exitWith, ExitCode (..) )
 import qualified System.Console.GetOpt as GetOpt
 
-import Control.Monad.Trans.Except
+import           Control.Monad.Trans.Except
 import qualified LLVM.AST as AST
 
-import qualified Driver
-import qualified Parser
-import Utility
-import qualified TypeChecker as TC
-import qualified Codegen
+import qualified Craeft.Driver as Driver
+import qualified Craeft.Parser as Parser
+import           Craeft.Utility
+import qualified Craeft.TypeChecker as TC
+import qualified Craeft.Codegen as Codegen
 
 main :: IO ()
 main = do args <- getArgs

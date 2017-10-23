@@ -1,5 +1,5 @@
 {-|
-Module      : Codegen
+Module      : Craeft.Codegen
 Description : Codegen from the typed AST (@TAST@) to LLVM.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -15,34 +15,34 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 
-module Codegen ( codegen ) where
+module Craeft.Codegen ( codegen ) where
 
-import qualified TypedAST as TAST
-import qualified Types
-import qualified Scope
-import Utility
-
-import Debug.Trace (traceM)
-import Data.Function (on)
-import Data.String (fromString)
-import Control.Monad.Except
-import Control.Monad.State
-import Control.Monad.Trans.Except (ExceptT, throwE)
-import Control.Monad.Trans.State (StateT)
-import Data.List (lookup, sortBy)
-import Data.Maybe (fromMaybe)
+import           Debug.Trace (traceM)
+import           Data.Function (on)
+import           Data.String (fromString)
+import           Control.Monad.Except
+import           Control.Monad.State
+import           Control.Monad.Trans.Except (ExceptT, throwE)
+import           Control.Monad.Trans.State (StateT)
+import           Data.List (lookup, sortBy)
+import           Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
-import Control.Lens
-import Control.Lens.Internal.Zoom ( Focusing )
-import LLVM.AST
+import           Control.Lens
+import           Control.Lens.Internal.Zoom ( Focusing )
+import           LLVM.AST
 import qualified LLVM.AST.Type as LLTy
 import qualified LLVM.AST.Instruction as LLInstr
 import qualified LLVM.AST.Constant as LLConst
 import qualified LLVM.AST.Float as LLFloat
 import qualified LLVM.AST.Global as LLGlobal
 import qualified LLVM.AST.CallingConvention as CConv
-import LLVM.AST.AddrSpace ( AddrSpace (..) )
+import           LLVM.AST.AddrSpace ( AddrSpace (..) )
+
+import qualified Craeft.TypedAST as TAST
+import qualified Craeft.Types as Types
+import qualified Craeft.Scope as Scope
+import           Craeft.Utility as Utility
 
 -- | The state for the codegen monad.
 --

@@ -1,5 +1,5 @@
 {-|
-Module      : Types
+Module      : Craeft.Types
 Description : Internal representation of Craeft types.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -7,8 +7,8 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
-module Types ( Type (..)
-             , Precision (..) ) where
+module Craeft.Types ( Type (..)
+                    , Precision (..) ) where
 
 data Precision = SinglePrec | DoublePrec
   deriving (Eq, Ord, Show)

@@ -1,5 +1,5 @@
 {-|
-Module      : TypeChecker
+Module      : Craeft.TypeChecker
 Description : The Craeft type-checking phase.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -12,23 +12,22 @@ consistent in the process.
 
 {-# LANGUAGE TemplateHaskell #-}
 
-module TypeChecker ( typeCheck ) where
+module Craeft.TypeChecker ( typeCheck ) where
 
-import Control.Monad ( sequence_
-                     , when )
+import           Control.Monad ( sequence_, when )
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.List as List
 
-import Control.Lens
-import Control.Monad.Except (throwError)
-import Control.Monad.Trans.State (evalStateT)
+import           Control.Lens
+import           Control.Monad.Except (throwError)
+import           Control.Monad.Trans.State (evalStateT)
 
-import qualified AST
-import qualified TypedAST as TAST
-import Types
-import Utility
-import qualified Scope
+import qualified Craeft.AST as AST
+import qualified Craeft.TypedAST as TAST
+import           Craeft.Types
+import           Craeft.Utility
+import qualified Craeft.Scope as Scope
 
 -- | The state for the type checker.
 data CheckerState = CheckerState { -- ^ A mapping from type names to types;

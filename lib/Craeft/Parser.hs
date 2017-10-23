@@ -1,5 +1,5 @@
 {-|
-Module      : Parser
+Module      : Craeft.Parser
 Description : A Parsec-based parser for Craeft.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -7,22 +7,24 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
-module Parser ( parseExpression
-              , parseType
-              , parseStatement
-              , parseTopLevel
-              , parseProgram ) where
+module Craeft.Parser ( parseExpression
+                     , parseType
+                     , parseStatement
+                     , parseTopLevel
+                     , parseProgram ) where
 
-import Control.Monad
-import Control.Monad.Trans.Except
-import Text.Parsec hiding ( SourcePos )
-import Text.Parsec.String (Parser)
-import Text.Parsec.Error as E
-import Text.Parsec.Expr
-import Text.Parsec.Char
-import qualified AST
-import qualified Lexer
-import Utility
+import           Control.Monad
+
+import           Control.Monad.Trans.Except
+import           Text.Parsec hiding ( SourcePos )
+import           Text.Parsec.String (Parser)
+import           Text.Parsec.Error as E
+import           Text.Parsec.Expr
+import           Text.Parsec.Char
+
+import qualified Craeft.AST as AST
+import qualified Craeft.Lexer as Lexer
+import           Craeft.Utility
 
 --
 -- Nicely wrapping everything.
@@ -87,7 +89,7 @@ term = do p <- getPosition
             <|> positionExpr unsigned
             <|> positionExpr signed
             <|> positionExpr float
-            <|> positionExpr Parser.string
+            <|> positionExpr Craeft.Parser.string
             <|> positionExpr functionCall
             <|> do lv <- AST.LValueExpr <$> (dereference <|> variable)
                    return $ Annotated lv p

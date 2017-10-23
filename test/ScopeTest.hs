@@ -1,7 +1,7 @@
 module ScopeTest where
 
-import Utility
-import Scope
+import Craeft.Utility
+import Craeft.Scope as Scope
 
 import Control.Monad ( liftM3 )
 import Control.Monad.State
@@ -15,12 +15,12 @@ instance Arbitrary SourcePos where
 
 instance Arbitrary a => Arbitrary (ScopeState a) where
     -- TODO: make this yield nested scopes.
-    arbitrary = Scope.make <$> arbitrary
+    arbitrary = make <$> arbitrary
 
 prop_lookupEmptyErrors :: String -> SourcePos -> Bool 
 prop_lookupEmptyErrors s p =
     let res :: Except Error Bool
-        res = evalStateT (Scope.lookup s p) Scope.empty
+        res = evalStateT (Scope.lookup s p) empty
      in case runExcept res of Left _ -> True
                               _ -> False
 

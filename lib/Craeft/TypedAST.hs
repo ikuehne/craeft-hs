@@ -1,5 +1,5 @@
 {-|
-Module      : TAST
+Module      : Craeft.TypedAST
 Description : The typed Craeft Abstract Syntax Tree.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -10,10 +10,10 @@ Very similar to the @AST@, but with types represented as concrete Craeft types
 rather than syntactic references.
 -}
 
-module TypedAST where
+module Craeft.TypedAST where
 
-import Types
-import Utility
+import Craeft.Types
+import Craeft.Utility
 
 type Program = [Annotated TopLevel]
 

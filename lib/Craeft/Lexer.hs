@@ -1,5 +1,5 @@
 {-|
-Module      : Lexer
+Module      : Craeft.Lexer
 Description : A Parsec-based lexical analyzer for Craeft.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -7,15 +7,15 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
-module Lexer where
+module Craeft.Lexer where
 
 import qualified Data.Char as Char
-import Control.Monad
-import Text.Parsec.String (Parser)
-import Text.Parsec.Char
-import Text.Parsec
-import Text.Parsec.Language (emptyDef)
+import           Control.Monad
 
+import           Text.Parsec.String (Parser)
+import           Text.Parsec.Char
+import           Text.Parsec
+import           Text.Parsec.Language (emptyDef)
 import qualified Text.Parsec.Token as Tok
 
 lexer :: Tok.TokenParser ()

@@ -17,16 +17,16 @@ library
   hs-source-dirs:      lib
   include-dirs:        lib
   exposed-modules:
-      AST
-    , Driver
-    , Parser
-    , Lexer
-    , Codegen
-    , Utility
-    , TypeChecker
-    , Types
-    , Scope
-    , TypedAST
+      Craeft.AST
+    , Craeft.Driver
+    , Craeft.Parser
+    , Craeft.Lexer
+    , Craeft.Codegen
+    , Craeft.Utility
+    , Craeft.TypeChecker
+    , Craeft.Types
+    , Craeft.Scope
+    , Craeft.TypedAST
   default-language:    Haskell2010
   build-depends:
       base                 >= 4.7

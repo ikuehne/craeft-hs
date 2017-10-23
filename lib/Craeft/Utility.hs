@@ -1,5 +1,5 @@
 {-|
-Module      : Utility
+Module      : Craeft.Utility
 Description : Error handling and related utilities.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -7,14 +7,14 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
-module Utility ( Annotated (..)
-               , Error (..)
-               , CraeftExcept
-               , bracketed
-               , liftMaybe
-               , CraeftMonad
-               , module Text.Parsec.Pos
-               , prettyPrintError ) where
+module Craeft.Utility ( Annotated (..)
+                      , Error (..)
+                      , CraeftExcept
+                      , bracketed
+                      , liftMaybe
+                      , CraeftMonad
+                      , module Text.Parsec.Pos
+                      , prettyPrintError ) where
 
 import Data.Maybe (maybe)
 import System.Console.ANSI

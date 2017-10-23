@@ -1,5 +1,5 @@
 {-|
-Module      : Scope
+Module      : Craeft.Scope
 Description : An abstract mapping type, allowing nested maps.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -11,28 +11,28 @@ Used to represent Craeft scopes.
 
 {-# LANGUAGE TemplateHaskell #-}
 
-module Scope ( -- * Basic data types.
-               Scope 
-             , ScopeState
-               -- * Creating new scopes.
-             , Scope.empty
-             , make
-               -- * Nesting scopes.
-             , nested
-               -- * Map operations.
-             , Scope.lookup
-             , insert ) where
+module Craeft.Scope ( -- * Basic data types.
+                      Scope 
+                    , ScopeState
+                      -- * Creating new scopes.
+                    , Craeft.Scope.empty
+                    , make
+                      -- * Nesting scopes.
+                    , nested
+                      -- * Map operations.
+                    , Craeft.Scope.lookup
+                    , insert ) where
 
-import Control.Applicative
+import           Control.Applicative
 import qualified Data.List as List
-import Data.Map (Map)
+import           Data.Map (Map)
 import qualified Data.Map as Map
 
-import Control.Lens
-import Control.Monad.Except
-import Control.Monad.State
+import           Control.Lens
+import           Control.Monad.Except
+import           Control.Monad.State
 
-import Utility
+import           Craeft.Utility
 
 newtype ScopeState a = ScopeState { _scopes :: [Map String a] }
 makeLenses ''ScopeState

@@ -1,5 +1,5 @@
 {-|
-Module      : Driver
+Module      : Craeft.Driver
 Description : Driving the compiler: compiling LLVM @Module@s to output files.
 Copyright   : (c) Ian Kuehne, 2017
 License     : GPL-3
@@ -7,14 +7,14 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
-module Driver ( compileToObject
-              , compileToLlvm ) where
+module Craeft.Driver ( compileToObject
+                     , compileToLlvm ) where
 
-import System.IO ( FilePath )
+import           System.IO ( FilePath )
 
 import qualified LLVM.AST as AST
 import qualified LLVM.Module as LLVM
-import LLVM.Internal.Context ( withContext )
+import           LLVM.Internal.Context ( withContext )
 import qualified LLVM.Internal.Target as Target
 
 -- | Run the given action on a module in a fresh context.
