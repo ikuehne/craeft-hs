@@ -29,15 +29,15 @@ library
     , Craeft.TypedAST
   default-language:    Haskell2010
   build-depends:
-      base                 >= 4.7
-    , parsec               >= 3.1
-    , mtl                  >= 2.1.3
-    , transformers         >= 0.3.0.0
-    , ansi-terminal        >= 0.6.0.0 && < 0.7
-    , llvm-hs              >= 5.0.0
-    , llvm-hs-pure         >= 5.0.0
-    , containers           >= 0.5.7.1
-    , lens                 >= 4.0.0
+      base                 >= 4.0
+    , parsec               >= 3.0
+    , mtl                  >= 2.0
+    , transformers         >= 0.3
+    , ansi-terminal        >= 0.6
+    , llvm-hs              >= 5.0
+    , llvm-hs-pure         >= 5.0
+    , containers           >= 0.5
+    , lens                 >= 4.0
 
 executable craeft
   hs-source-dirs:      src
@@ -45,9 +45,9 @@ executable craeft
   default-language:    Haskell2010
   build-depends:
       base                 >= 4.7
-    , transformers         >= 0.3.0.0
-    , llvm-hs              >= 5.0.0
-    , llvm-hs-pure         >= 5.0.0
+    , transformers         >= 0.3
+    , llvm-hs              >= 5.0
+    , llvm-hs-pure         >= 5.0
     , craeft-hs
 
 test-suite lib-test
@@ -59,9 +59,9 @@ test-suite lib-test
     , Utility
   build-depends:
       base                 >= 4.7
-    , mtl                  >= 2.1.3
-    , transformers         >= 0.3.0.0
-    , containers           >= 0.5.7.1
-    , QuickCheck           >= 2.0.0
+    , mtl                  >= 2.1
+    , transformers         >= 0.3
+    , containers           >= 0.5
+    , QuickCheck           >= 2.0
     , craeft-hs
   default-language:  Haskell2010
