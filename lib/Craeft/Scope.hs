@@ -35,6 +35,7 @@ import           Control.Monad.State
 import           Craeft.Utility
 
 newtype ScopeState a = ScopeState { _scopes :: [Map String a] }
+    deriving Show
 makeLenses ''ScopeState
 
 type Scope a r = CraeftMonad (ScopeState a) r
