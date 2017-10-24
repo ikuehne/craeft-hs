@@ -4,8 +4,7 @@ import Control.Monad (when)
 import System.Exit
 
 import ScopeTest
-import Test.QuickCheck
+import Test.Tasty
 
 main :: IO ()
-main = do success <- scopeTests
-          when (not success) $ exitWith $ ExitFailure 1
+main = defaultMain $ testGroup "Unit Tests" [ scopeTests ]

@@ -1,14 +1,11 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 module ScopeTest where
 
 import Craeft.Utility
 import Craeft.Scope as Scope
 import Control.Monad ( liftM3 )
 import Control.Monad.State
-import Test.QuickCheck
-import Test.QuickCheck.Arbitrary
-import Test.QuickCheck.Gen
+import Test.Tasty
+import Test.Tasty.QuickCheck as QC
 
 import Utility
 
@@ -30,23 +27,23 @@ instance Arbitrary a => Arbitrary (ScopeState a) where
                 mapM_ (uncurry insert) randoms
                 get
 
-prop_insertAvailableAfter :: String -> SourcePos -> Int -> ScopeState Int
-                          -> Bool
-prop_insertAvailableAfter name p x = withArbitraryState $ do
+insertAvailableAfter :: String -> SourcePos -> Int -> ScopeState Int -> Bool
+insertAvailableAfter name p x = withArbitraryState $ do
     insert name x
     new <- Scope.lookup name p
     return $ new == x
 
-prop_lookupEmptyErrors :: String -> SourcePos -> Bool 
-prop_lookupEmptyErrors s p = Scope.lookup s p `failsOn` empty
+lookupEmptyErrors :: String -> SourcePos -> Bool 
+lookupEmptyErrors s p = Scope.lookup s p `failsOn` empty
 
-prop_nestingTemporary :: String -> SourcePos -> Int -> Int -> ScopeState Int
-                      -> Bool
-prop_nestingTemporary name pos old new = withArbitraryState $ do
+nestingTemporary :: String -> SourcePos -> Int -> Int -> ScopeState Int -> Bool
+nestingTemporary name pos old new = withArbitraryState $ do
     insert name old
     nested id $ insert name new
     current <- Scope.lookup name pos
     return $ current == old
 
-return []
-scopeTests = $quickCheckAll
+scopeTests = testGroup "Scope Tests" [
+    QC.testProperty "name available after insert" insertAvailableAfter
+  , QC.testProperty "lookup on empty throws" lookupEmptyErrors
+  , QC.testProperty "nested scopes are temporary" nestingTemporary ]
