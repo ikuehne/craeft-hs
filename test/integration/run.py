@@ -97,15 +97,18 @@ class CheckOutputIntegrationTest(TempFileContextManager):
                          "compiler linking invocation failed")
 
     def run_exc(self):
-        child = subprocess.Popen([self.exc], stdout=subprocess.PIPE)
-        assert child.wait() == 0, "executable failed"
+        child = subprocess.Popen([self.exc], stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE)
+        assert child.wait() == 0, ("executable failed with stdout =\n"
+                                 + child.stdout.read().decode()
+                                 + "\nstderr =\n"
+                                 + child.stderr.read().decode())
         found = child.stdout.read()
         msg = "output incorrect: expected {}; found {}".format(self.expected,
                                                                found)
         assert found == self.expected, msg
 
     def run(self):
-        assert False
         self.compile_craeft()
         self.compile_harness()
         self.link()
