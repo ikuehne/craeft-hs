@@ -105,6 +105,7 @@ class CheckOutputIntegrationTest(TempFileContextManager):
         assert found == self.expected, msg
 
     def run(self):
+        assert False
         self.compile_craeft()
         self.compile_harness()
         self.link()
@@ -180,6 +181,8 @@ def main():
                 print(prefix + "failed. Stack trace:")
                 traceback.print_exc()
     print("\nTests complete. {}/{} succeeded.".format(successes, len(confs)))
+    if successes != len(confs):
+        exit(1)
 
 if __name__ == "__main__":
     main()
