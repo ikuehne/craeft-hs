@@ -36,7 +36,7 @@ matrix:
   include:
   - env: BUILD=stack ARGS="--resolver lts-9"
     compiler: ": #stack 8.0.2"
-    addons: {apt: {packages: [ghc-8.0.2,gcc-5,g++-5], sources: [hvr-ghc,ubuntu-toolchain-r-test]}}
+    addons: {apt: {packages: [ghc-8.0.2,gcc-5,g++-5,python3], sources: [hvr-ghc,ubuntu-toolchain-r-test]}}
 
 before_install:
 # Using compiler above sets CC to an invalid value, so unset it
