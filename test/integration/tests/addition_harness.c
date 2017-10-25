@@ -16,4 +16,5 @@ int main(void) {
     char test_str[100] = "     20";
     printf("%s\n", ptr_int_add(test_str, 5));
     printf("%s\n", int_ptr_add(5, test_str));
+    return 0;
 }
