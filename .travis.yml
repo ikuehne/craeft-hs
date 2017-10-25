@@ -75,8 +75,8 @@ install:
 - export PATH=$HOME/cmake-3.9.2-Linux-x86_64/bin:$PATH
 - curl -L https://github.com/ninja-build/ninja/releases/download/v1.7.2/ninja-linux.zip -o ninja-linux.zip
 - unzip ninja-linux.zip -d $HOME/bin
-- curl http://releases.llvm.org/${LLVM_VERSION}/llvm-${LLVM_VER}.src.tar.xz | tar -xJf - -C $HOME
-- rsync -ac $HOME/llvm-${LLVM_VERSION}.src/ $HOME/llvm-src-${LLVM_VER}
+- curl http://releases.llvm.org/${LLVM_VERSION}/llvm-${LLVM_VERSION}.src.tar.xz | tar -xJf - -C $HOME
+- rsync -ac $HOME/llvm-${LLVM_VERSION}.src/ $HOME/llvm-src-${LLVM_VERSION}
 - cd $HOME/llvm-src-${LLVM_VERSION}
 - mkdir -p build && cd build
 - cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/llvm-build-${LLVM_VERSION} -DLLVM_PARALLEL_LINK_JOBS=1 -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_BUILD_LLVM_DYLIB=True -DLLVM_LINK_LLVM_DYLIB=True -GNinja ..
