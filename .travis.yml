@@ -40,7 +40,7 @@ matrix:
 
 before_install:
 # Make sure yaml is installed for integration tests
-- pip3 install pyyaml
+- pip3 install --user pyyaml
 
 # We want to always allow newer versions of packages when building on GHC HEAD
 - CABALARGS=""
