@@ -1,6 +1,5 @@
 module Main ( main ) where
 
-import           Debug.Trace (traceM)
 import           System.Environment ( getArgs )
 import           System.IO ( FilePath )
 import qualified System.IO as IO

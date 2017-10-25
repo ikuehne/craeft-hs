@@ -252,6 +252,9 @@ bitwiseOps = Set.fromList ["&", "|"]
 -- sometimes pointers.
 arithmeticOps = Set.fromList ["+", "*", "/", "-"]
 
+errNoLogicalOps = flip throw $ "cannot perform logical operations between types"
+                            ++ " other than U1"
+
 -- | Infer the result type of a binary operator expression.
 --
 -- Takes as arguments the operator (as a string) and the types of the LHS and
@@ -259,8 +262,7 @@ arithmeticOps = Set.fromList ["+", "*", "/", "-"]
 inferBinopType :: SourcePos -> Type -> String -> Type -> Checker Type
 inferBinopType p (Signed l) s (Signed r) 
   | s `Set.member` comparisonOps = return $ Unsigned 1
-  | s `Set.member` logicalOps =
-      throw p "cannot perform logical operation between integers"
+  | s `Set.member` logicalOps = errNoLogicalOps p
   | s `Set.member` Set.union bitwiseOps arithmeticOps =
       return $ Signed $ max l r
   | otherwise = throwError $
@@ -278,6 +280,20 @@ inferBinopType p (Unsigned l) s (Unsigned r)
       return $ Unsigned $ max l r
   | otherwise = throwError $
         InternalError $ "type checker received unrecognized op" ++ s
+inferBinopType p (Floating precl) s (Floating precr)
+  | s `Set.member` comparisonOps = return $ Unsigned 1
+  | s `Set.member` logicalOps = errNoLogicalOps p
+  | s `Set.member` bitwiseOps = throw p $ "can't perform bitwise operation on "
+                                       ++ "floating-point values"
+  | s `Set.member` arithmeticOps = return $ Floating (max precl precr)
+inferBinopType p (Floating prec) _ _ =
+    throw p "cannot perform operation between floating-point and another type"
+inferBinopType p _ _ (Floating prec) =
+    throw p "cannot perform operation between floating-point and another type"
+inferBinopType p (Signed _) "+" (Pointer t) = return $ Pointer t
+inferBinopType p (Unsigned l) "+" (Pointer t) = return $ Pointer t
+inferBinopType p (Pointer t) "+" (Signed _) = return $ Pointer t
+inferBinopType p (Pointer t) "+" (Unsigned _) = return $ Pointer t
 inferBinopType p _ s _ = throw p
     "type checker doesn't know how to deal with these yet"
 

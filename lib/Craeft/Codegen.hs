@@ -17,7 +17,6 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 
 module Craeft.Codegen ( codegen ) where
 
-import           Debug.Trace (traceM)
 import           Data.Function (on)
 import           Data.String (fromString)
 import           Control.Monad.Except
@@ -272,7 +271,7 @@ exprCodegen a = case TAST.exprContents $ contents a of
             rty = TAST.exprType $ contents r
         -- Use the @ops@ map to lookup that operation.
         f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
-        f p ty (lty, lhs) (lty, rhs)
+        f p ty (lty, lhs) (rty, rhs)
     TAST.FunctionCall f args -> do
         func <- exprCodegen f
 
@@ -297,13 +296,56 @@ exprCodegen a = case TAST.exprContents $ contents a of
         ty = TAST.exprType $ contents a
         llty = translateType ty
 
+--
+-- Casts.
+--
+
+castWithExtTrunc constructor extender truncator old new operand
+    | old < new = extender operand (constructor new)
+    | old == new = return operand
+    | otherwise = truncator operand (constructor new)
+
+cast :: SourcePos -> Value -> Types.Type -> Codegen Operand
+cast p (Types.Signed oldbits, o) (Types.Signed newbits) =
+    castWithExtTrunc Types.Signed sext trunc oldbits newbits o
+cast p (Types.Unsigned oldbits, o) new@(Types.Signed _) =
+    cast p (Types.Signed oldbits, o) new
+cast p (Types.Unsigned oldbits, o) (Types.Unsigned newbits) =
+    castWithExtTrunc Types.Unsigned zext trunc oldbits newbits o
+cast p (Types.Signed oldbits, o) new@(Types.Unsigned _) =
+    cast p (Types.Unsigned oldbits, o) new
+cast p (Types.Floating oldprec, o) (Types.Floating newprec) =
+    castWithExtTrunc Types.Floating fext ftrunc oldprec newprec o
+cast p _ _ = throwError $ TypeError "invalid cast" p
+
+--
+-- Operators.
+--
+
 type Operator = SourcePos -> Types.Type -> Value -> Value -> Codegen Operand
+
+casted :: SourcePos -> Value -> Value -> Types.Type
+       -> Codegen (Operand, Operand)
+casted p lhs rhs resultTy = do
+    l <- cast p lhs resultTy
+    r <- cast p rhs resultTy
+    return (l, r)
+
+addIntValues :: Operator
+addIntValues p t l r = do (lhs, rhs) <- casted p l r t
+                          intAdd lhs rhs t
 
 -- The addition operator.
 addValues :: Operator
-addValues p t (Types.Signed _, l) (Types.Signed _, r) =
-    instr addition (translateType t)
-  where addition = LLInstr.Add False False l r []
+addValues p t l@(lt, lo) r@(rt, ro)
+  | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r t
+                                                intAdd lhs rhs t
+  | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
+                                                floatAdd lhs rhs t
+  | Types.integral lt && Types.pointer rt = ptrAdd ro lo t
+  | Types.pointer lt && Types.integral rt = ptrAdd lo ro t
+  | otherwise = throwError $ TypeError ("cannot add " ++ show l
+                                            ++ " to " ++ show r) p
 
 --
 -- Type codegen.
@@ -420,3 +462,31 @@ ptr ty = PointerType ty (AddrSpace 0)
 -- | Create an operand from a constant @Integer@.
 constInt :: Integer -> Operand
 constInt i = ConstantOperand (LLConst.Int 64 i)
+
+fromLlvmCast llcast o t = instr (llcast o llty []) llty
+  where llty = translateType t
+
+fext :: Operand -> Types.Type -> Codegen Operand
+fext = fromLlvmCast LLInstr.FPExt
+
+ftrunc :: Operand -> Types.Type -> Codegen Operand
+ftrunc = fromLlvmCast LLInstr.FPTrunc
+
+sext :: Operand -> Types.Type -> Codegen Operand
+sext = fromLlvmCast LLInstr.SExt
+
+zext :: Operand -> Types.Type -> Codegen Operand
+zext = fromLlvmCast LLInstr.ZExt
+
+trunc :: Operand -> Types.Type -> Codegen Operand
+trunc = fromLlvmCast LLInstr.Trunc
+
+intAdd :: Operand -> Operand -> Types.Type -> Codegen Operand
+intAdd l r t = instr (LLInstr.Add False False l r []) (translateType t)
+
+floatAdd :: Operand -> Operand -> Types.Type -> Codegen Operand
+floatAdd l r t = instr (LLInstr.FAdd NoFastMathFlags l r []) (translateType t)
+
+ptrAdd :: Operand -> Operand -> Types.Type -> Codegen Operand
+ptrAdd ptr offset t = instr (LLInstr.GetElementPtr False ptr [offset] [])
+                            (translateType t)
