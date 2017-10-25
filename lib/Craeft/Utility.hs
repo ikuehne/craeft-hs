@@ -14,7 +14,8 @@ module Craeft.Utility ( Annotated (..)
                       , liftMaybe
                       , CraeftMonad
                       , module Text.Parsec.Pos
-                      , prettyPrintError ) where
+                      , prettyPrintError
+                      , renderError ) where
 
 import Data.Maybe (maybe)
 import System.Console.ANSI
@@ -74,11 +75,19 @@ prettyPrintError (TypeError msg p) = prettyPrintHelper "type error" msg p
 prettyPrintError (InternalError msg) = printWithHeader "internal error" msg
 prettyPrintError (UsageError msg) = printWithHeader "usage error" msg
 
+renderError :: Error -> String
+renderError (ParseError msg p) = renderHelper "parse error" msg p
+renderError (NameError msg p) = renderHelper "name error" msg p
+renderError (TypeError msg p) = renderHelper "type error" msg p
+renderError (InternalError msg) = withHeader "internal error" msg
+renderError (UsageError msg) = withHeader "usage error" msg
+
+renderHelper header msg p = renderPos p ++ ": " ++ withHeader header msg
+withHeader header msg = header ++ ": " ++ msg
+
 -- | Data @Annotated@ with a source position.
 data Annotated a = Annotated { contents :: a, pos :: SourcePos }
   deriving Show
-
-
 
 headerColor :: IO ()
 headerColor = hSetSGR stderr [SetColor Foreground Vivid Red]
@@ -92,11 +101,13 @@ put = hPutStr stderr
 putln :: String -> IO ()
 putln = hPutStrLn stderr
 
+renderPos pos = sourceName pos ++ ":"
+             ++ show (sourceLine pos) ++ ":"
+             ++ show (sourceColumn pos)
+
 prettyPrintHelper :: String -> String -> SourcePos -> IO ()
 prettyPrintHelper header msg pos = do 
-    put $ sourceName pos ++ ":" 
-    put $ show (sourceLine pos) ++ ":"
-    put $ show (sourceColumn pos) ++ ": "
+    put $ renderPos pos ++ ": "
     printWithHeader header msg
 
 printWithHeader :: String -> String -> IO ()

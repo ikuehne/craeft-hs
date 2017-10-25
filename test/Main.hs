@@ -4,7 +4,10 @@ import Control.Monad (when)
 import System.Exit
 
 import ScopeTest
+import TypeCheckerTest
 import Test.Tasty
 
 main :: IO ()
-main = defaultMain $ testGroup "Unit Tests" [ scopeTests ]
+main = defaultMain $ testGroup "Unit Tests" [
+    scopeTests
+  , typeCheckerTests]

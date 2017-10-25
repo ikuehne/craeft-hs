@@ -9,9 +9,6 @@ import Test.Tasty.QuickCheck as QC
 
 import Utility
 
-instance Arbitrary SourcePos where
-    arbitrary = liftM3 newPos arbitrary arbitrary arbitrary
-
 instance Arbitrary a => Arbitrary (ScopeState a) where
     -- Yes, this is disgusting, and could be improved by expanding the interface
     -- of @Scope@.  However, that would have to mean removing some of its safety
@@ -44,6 +41,6 @@ nestingTemporary name pos old new = withArbitraryState $ do
     return $ current == old
 
 scopeTests = testGroup "Scope Tests" [
-    QC.testProperty "name available after insert" insertAvailableAfter
-  , QC.testProperty "lookup on empty throws" lookupEmptyErrors
-  , QC.testProperty "nested scopes are temporary" nestingTemporary ]
+    QC.testProperty "Name available after insert" insertAvailableAfter
+  , QC.testProperty "Lookup on empty throws" lookupEmptyErrors
+  , QC.testProperty "Nested scopes are temporary" nestingTemporary ]
