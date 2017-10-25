@@ -50,9 +50,9 @@ executable craeft
     , llvm-hs-pure         >= 5.0
     , craeft-hs
 
-test-suite lib-test
+test-suite unit-tests
   type:              exitcode-stdio-1.0
-  hs-source-dirs:    test
+  hs-source-dirs:    test/unit
   main-is:           Main.hs
   other-modules:
       AstInstances

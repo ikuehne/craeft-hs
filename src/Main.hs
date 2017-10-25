@@ -20,6 +20,7 @@ main :: IO ()
 main = do args <- getArgs
           (inpath, opts) <- handleExcept $ compilerOpts args
           compiled <- compile inpath
+          print compiled
           mapM_ (handleOpt compiled) opts
 
 -- | Read in a file and translate it to a pure LLVM module.

@@ -137,7 +137,9 @@ voidInstr :: Instruction -> Codegen ()
 voidInstr ins = modifyBlock (stack %~ (Do ins :))
 
 instr :: Instruction -> Type -> Codegen Operand
-instr ins t = do ref <- UnName <$> uses count succ
+instr _ VoidType = throwError $ InternalError "attempt to name void instruction"
+instr ins t = do count %= succ
+                 ref <- UnName <$> use count
                  modifyBlock (stack %~ ((ref := ins) :))
                  return (LocalReference t ref)
 
