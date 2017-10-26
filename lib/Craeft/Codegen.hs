@@ -292,7 +292,7 @@ exprCodegen a = case TAST.exprContents $ contents a of
             Types.Function _ _ -> return lvOp
     other -> error $ show other
   where p = pos a
-        ops = Map.fromList [("+", addValues)]
+        ops = Map.fromList [("+", addValues), ("-", subValues)]
         ty = TAST.exprType $ contents a
         llty = translateType ty
 
@@ -316,6 +316,7 @@ cast p (Types.Signed oldbits, o) new@(Types.Unsigned _) =
     cast p (Types.Unsigned oldbits, o) new
 cast p (Types.Floating oldprec, o) (Types.Floating newprec) =
     castWithExtTrunc Types.Floating fext ftrunc oldprec newprec o
+cast p (Types.Pointer _, o) ty@(Types.Unsigned _) = bitcast o ty
 cast p _ _ = throwError $ TypeError "invalid cast" p
 
 --
@@ -331,11 +332,7 @@ casted p lhs rhs resultTy = do
     r <- cast p rhs resultTy
     return (l, r)
 
-addIntValues :: Operator
-addIntValues p t l r = do (lhs, rhs) <- casted p l r t
-                          intAdd lhs rhs t
-
--- The addition operator.
+-- | The addition operator.
 addValues :: Operator
 addValues p t l@(lt, lo) r@(rt, ro)
   | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r t
@@ -346,6 +343,22 @@ addValues p t l@(lt, lo) r@(rt, ro)
   | Types.pointer lt && Types.integral rt = ptrAdd lo ro t
   | otherwise = throwError $ TypeError ("cannot add " ++ show l
                                             ++ " to " ++ show r) p
+
+-- | The subtraction operator.
+subValues :: Operator
+subValues p t l@(lt, lo) r@(rt, ro)
+  | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r t
+                                                intSub lhs rhs t
+  | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
+                                                floatSub lhs rhs t
+  | Types.pointer lt && Types.integral rt = do 
+        asSigned <- cast p r (Types.Signed 64)
+        offset <- intNeg asSigned (Types.Signed 64)
+        ptrAdd lo offset t
+  | Types.pointer lt && Types.pointer rt = ptrSub lo ro t
+  | otherwise = throwError $ TypeError ("cannot subtract " ++ show l
+                                               ++ " from " ++ show r) p
+
 
 --
 -- Type codegen.
@@ -481,6 +494,9 @@ zext = fromLlvmCast LLInstr.ZExt
 trunc :: Operand -> Types.Type -> Codegen Operand
 trunc = fromLlvmCast LLInstr.Trunc
 
+bitcast :: Operand -> Types.Type -> Codegen Operand
+bitcast = fromLlvmCast LLInstr.BitCast
+
 intAdd :: Operand -> Operand -> Types.Type -> Codegen Operand
 intAdd l r t = instr (LLInstr.Add False False l r []) (translateType t)
 
@@ -490,3 +506,17 @@ floatAdd l r t = instr (LLInstr.FAdd NoFastMathFlags l r []) (translateType t)
 ptrAdd :: Operand -> Operand -> Types.Type -> Codegen Operand
 ptrAdd ptr offset t = instr (LLInstr.GetElementPtr False ptr [offset] [])
                             (translateType t)
+
+intSub :: Operand -> Operand -> Types.Type -> Codegen Operand
+intSub l r t = instr (LLInstr.Sub False False l r []) (translateType t)
+
+intNeg :: Operand -> Types.Type -> Codegen Operand
+intNeg = intSub (constInt 0)
+
+floatSub :: Operand -> Operand -> Types.Type -> Codegen Operand
+floatSub l r t = instr (LLInstr.FSub NoFastMathFlags l r []) (translateType t)
+
+ptrSub :: Operand -> Operand -> Types.Type -> Codegen Operand
+ptrSub l r t = do lhsAsInt <- bitcast l (Types.Signed 64)
+                  rhsAsInt <- bitcast r (Types.Signed 64)
+                  intSub l r t

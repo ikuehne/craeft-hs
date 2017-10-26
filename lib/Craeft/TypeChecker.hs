@@ -294,6 +294,11 @@ inferBinopType p (Signed _) "+" (Pointer t) = return $ Pointer t
 inferBinopType p (Unsigned l) "+" (Pointer t) = return $ Pointer t
 inferBinopType p (Pointer t) "+" (Signed _) = return $ Pointer t
 inferBinopType p (Pointer t) "+" (Unsigned _) = return $ Pointer t
+inferBinopType p (Pointer t) "-" (Signed _) = return $ Pointer t
+inferBinopType p (Pointer t) "-" (Unsigned _) = return $ Pointer t
+inferBinopType p (Pointer t1) "-" (Pointer t2) 
+    | t1 == t2 = return $ Signed 64
+    | otherwise = throw p "cannot subtract pointers of different sizes"
 inferBinopType p _ s _ = throw p
     "type checker doesn't know how to deal with these yet"
 
