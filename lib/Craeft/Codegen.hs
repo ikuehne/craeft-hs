@@ -292,7 +292,9 @@ exprCodegen a = case TAST.exprContents $ contents a of
             Types.Function _ _ -> return lvOp
     other -> error $ show other
   where p = pos a
-        ops = Map.fromList [("+", addValues), ("-", subValues)]
+        ops = Map.fromList [ ("+", addValues)
+                           , ("-", subValues)
+                           , ("*", mulValues) ]
         ty = TAST.exprType $ contents a
         llty = translateType ty
 
@@ -358,6 +360,16 @@ subValues p t l@(lt, lo) r@(rt, ro)
   | Types.pointer lt && Types.pointer rt = ptrSub lo ro t
   | otherwise = throwError $ TypeError ("cannot subtract " ++ show l
                                                ++ " from " ++ show r) p
+
+mulValues :: Operator
+mulValues p t l@(lt, lo) r@(rt, ro)
+  | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r t
+                                                intMul lhs rhs t
+  | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
+                                                floatMul lhs rhs t
+  | Types.integral lt && Types.pointer rt = ptrAdd ro lo t
+  | otherwise = throwError $ TypeError ("cannot multiply " ++ show l
+                                                 ++ " by " ++ show r) p
 
 
 --
@@ -468,6 +480,12 @@ toplevelCodegen (Annotated tl p) = case tl of
 -- Low-level LLVM utilities.
 --
 
+-- | Get a higher-level version of an LLVM AST cast constructor.
+fromLlvmCast :: (Operand -> Type -> InstructionMetadata -> Instruction)
+             -> Operand -> Types.Type -> Codegen Operand
+fromLlvmCast llcast o t = instr (llcast o llty []) llty
+  where llty = translateType t
+
 -- | A simple pointer in the default address space.
 ptr :: Type -> Type
 ptr ty = PointerType ty (AddrSpace 0)
@@ -475,9 +493,6 @@ ptr ty = PointerType ty (AddrSpace 0)
 -- | Create an operand from a constant @Integer@.
 constInt :: Integer -> Operand
 constInt i = ConstantOperand (LLConst.Int 64 i)
-
-fromLlvmCast llcast o t = instr (llcast o llty []) llty
-  where llty = translateType t
 
 fext :: Operand -> Types.Type -> Codegen Operand
 fext = fromLlvmCast LLInstr.FPExt
@@ -520,3 +535,9 @@ ptrSub :: Operand -> Operand -> Types.Type -> Codegen Operand
 ptrSub l r t = do lhsAsInt <- bitcast l (Types.Signed 64)
                   rhsAsInt <- bitcast r (Types.Signed 64)
                   intSub l r t
+
+intMul :: Operand -> Operand -> Types.Type -> Codegen Operand
+intMul l r t = instr (LLInstr.Mul False False l r []) (translateType t)
+
+floatMul :: Operand -> Operand -> Types.Type -> Codegen Operand
+floatMul l r t = instr (LLInstr.FMul NoFastMathFlags l r []) (translateType t)
