@@ -54,6 +54,7 @@ test-suite unit-tests
   type:              exitcode-stdio-1.0
   hs-source-dirs:    test/unit
   main-is:           Main.hs
+  default-language:  Haskell2010
   other-modules:
       AstInstances
     , ScopeTest
@@ -68,12 +69,12 @@ test-suite unit-tests
     , tasty-hunit          >= 0.8
     , tasty                >= 0.11
     , craeft-hs
-  default-language:  Haskell2010
 
 test-suite integration-tests
   type:              exitcode-stdio-1.0
   hs-source-dirs:    test/integration
   main-is:           Main.hs
+  default-language:  Haskell2010
   build-depends:
       base                 >= 4.7
     , filepath             >= 1.0
