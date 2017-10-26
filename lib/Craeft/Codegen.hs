@@ -294,7 +294,8 @@ exprCodegen a = case TAST.exprContents $ contents a of
   where p = pos a
         ops = Map.fromList [ ("+", addValues)
                            , ("-", subValues)
-                           , ("*", mulValues) ]
+                           , ("*", mulValues)
+                           , ("/", divValues) ]
         ty = TAST.exprType $ contents a
         llty = translateType ty
 
@@ -370,6 +371,19 @@ mulValues p t l@(lt, lo) r@(rt, ro)
   | Types.integral lt && Types.pointer rt = ptrAdd ro lo t
   | otherwise = throwError $ TypeError ("cannot multiply " ++ show l
                                                  ++ " by " ++ show r) p
+
+divValues :: Operator
+-- Unsigned division is special.
+divValues p t l@(Types.Unsigned _, lo) r@(Types.Unsigned _, ro) = do
+    (lhs, rhs) <- casted p l r t
+    uintDiv lhs rhs t
+divValues p t l@(lt, lo) r@(rt, ro)
+  | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r t
+                                                sintDiv lhs rhs t
+  | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
+                                                floatDiv lhs rhs t
+  | otherwise = throwError $ TypeError ("cannot divide " ++ show l
+                                               ++ " by " ++ show r) p
 
 
 --
@@ -541,3 +555,12 @@ intMul l r t = instr (LLInstr.Mul False False l r []) (translateType t)
 
 floatMul :: Operand -> Operand -> Types.Type -> Codegen Operand
 floatMul l r t = instr (LLInstr.FMul NoFastMathFlags l r []) (translateType t)
+
+uintDiv :: Operand -> Operand -> Types.Type -> Codegen Operand
+uintDiv l r t = instr (LLInstr.UDiv False l r []) (translateType t)
+
+sintDiv :: Operand -> Operand -> Types.Type -> Codegen Operand
+sintDiv l r t = instr (LLInstr.SDiv False l r []) (translateType t)
+
+floatDiv :: Operand -> Operand -> Types.Type -> Codegen Operand
+floatDiv l r t = instr (LLInstr.FDiv NoFastMathFlags l r []) (translateType t)

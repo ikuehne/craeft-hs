@@ -1,0 +1,11 @@
+name:
+    division
+code: division.cr
+harness: division_harness.c
+output_text: |
+    20
+    20
+    20
+    -20
+    20
+    20
