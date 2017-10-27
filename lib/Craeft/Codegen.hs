@@ -298,7 +298,12 @@ exprCodegen a = case TAST.exprContents $ contents a of
                            , ("-", subValues)
                            , ("*", mulValues)
                            , ("/", divValues)
-                           , ("<", lessComp) ]
+                           , ("<", lessComp)
+                           , ("<=", lessEqComp)
+                           , (">", greaterComp)
+                           , (">=", greaterEqComp)
+                           , ("==", eqComp)
+                           , ("!=", neqComp) ]
         ty = TAST.exprType $ contents a
         llty = translateType ty
 
@@ -412,7 +417,11 @@ makeComparison ipred upred fpred p t l@(lt, lo) r@(rt, ro)
     
 
 lessComp = makeComparison IPred.SLT IPred.ULT FPPred.OLT
-lesseqComp = makeComparison IPred.SLE IPred.ULE FPPred.OLE
+lessEqComp = makeComparison IPred.SLE IPred.ULE FPPred.OLE
+greaterComp = makeComparison IPred.SGT IPred.UGT FPPred.OGT
+greaterEqComp = makeComparison IPred.SGE IPred.UGE FPPred.OGE
+eqComp = makeComparison IPred.EQ IPred.EQ FPPred.OEQ
+neqComp = makeComparison IPred.NE IPred.NE FPPred.ONE
 
 --
 -- Type codegen.

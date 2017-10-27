@@ -1,0 +1,14 @@
+name: greater-than
+code: gt.cr
+harness: gt_harness.c
+output_text: |
+    true
+    false
+    true
+    false
+    true
+    false
+    true
+    false
+    true
+    false

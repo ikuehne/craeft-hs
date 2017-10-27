@@ -1,0 +1,15 @@
+name: greater-than-eq
+code: gte.cr
+harness: gte_harness.c
+output_text: |
+    true
+    false
+    true
+    false
+    true
+    false
+    true
+    false
+    true
+    false
+
