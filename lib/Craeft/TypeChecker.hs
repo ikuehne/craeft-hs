@@ -280,6 +280,11 @@ inferBinopType p (Unsigned l) s (Unsigned r)
       return $ Unsigned $ max l r
   | otherwise = throwError $
         InternalError $ "type checker received unrecognized op" ++ s
+inferBinopType p (Pointer t1) s (Pointer t2) 
+  | t1 /= t2 = throw p "cannot compare pointers of different types"
+  | s `Set.member` comparisonOps = return $ Unsigned 1
+  | s == "-" = return $ Signed 64
+  | otherwise = throw p "cannot do arithmetic between pointers"
 inferBinopType p (Floating precl) s (Floating precr)
   | s `Set.member` comparisonOps = return $ Unsigned 1
   | s `Set.member` logicalOps = errNoLogicalOps p
@@ -296,9 +301,6 @@ inferBinopType p (Pointer t) "+" (Signed _) = return $ Pointer t
 inferBinopType p (Pointer t) "+" (Unsigned _) = return $ Pointer t
 inferBinopType p (Pointer t) "-" (Signed _) = return $ Pointer t
 inferBinopType p (Pointer t) "-" (Unsigned _) = return $ Pointer t
-inferBinopType p (Pointer t1) "-" (Pointer t2) 
-    | t1 == t2 = return $ Signed 64
-    | otherwise = throw p "cannot subtract pointers of different sizes"
 inferBinopType p _ s _ = throw p
     "type checker doesn't know how to deal with these yet"
 

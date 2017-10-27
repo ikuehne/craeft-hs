@@ -30,6 +30,8 @@ import qualified Data.Map as Map
 import           Control.Lens
 import           Control.Lens.Internal.Zoom ( Focusing )
 import           LLVM.AST
+import qualified LLVM.AST.FloatingPointPredicate as FPPred
+import qualified LLVM.AST.IntegerPredicate as IPred
 import qualified LLVM.AST.Type as LLTy
 import qualified LLVM.AST.Instruction as LLInstr
 import qualified LLVM.AST.Constant as LLConst
@@ -295,7 +297,8 @@ exprCodegen a = case TAST.exprContents $ contents a of
         ops = Map.fromList [ ("+", addValues)
                            , ("-", subValues)
                            , ("*", mulValues)
-                           , ("/", divValues) ]
+                           , ("/", divValues)
+                           , ("<", lessComp) ]
         ty = TAST.exprType $ contents a
         llty = translateType ty
 
@@ -328,6 +331,9 @@ cast p _ _ = throwError $ TypeError "invalid cast" p
 
 type Operator = SourcePos -> Types.Type -> Value -> Value -> Codegen Operand
 
+-- | Cast two values to a result type.
+--
+-- Handy for defining binary operators.
 casted :: SourcePos -> Value -> Value -> Types.Type
        -> Codegen (Operand, Operand)
 casted p lhs rhs resultTy = do
@@ -344,8 +350,8 @@ addValues p t l@(lt, lo) r@(rt, ro)
                                                 floatAdd lhs rhs t
   | Types.integral lt && Types.pointer rt = ptrAdd ro lo t
   | Types.pointer lt && Types.integral rt = ptrAdd lo ro t
-  | otherwise = throwError $ TypeError ("cannot add " ++ show l
-                                            ++ " to " ++ show r) p
+  | otherwise = throwError $ TypeError ("cannot add " ++ show lt
+                                            ++ " to " ++ show rt) p
 
 -- | The subtraction operator.
 subValues :: Operator
@@ -359,8 +365,8 @@ subValues p t l@(lt, lo) r@(rt, ro)
         offset <- intNeg asSigned (Types.Signed 64)
         ptrAdd lo offset t
   | Types.pointer lt && Types.pointer rt = ptrSub lo ro t
-  | otherwise = throwError $ TypeError ("cannot subtract " ++ show l
-                                               ++ " from " ++ show r) p
+  | otherwise = throwError $ TypeError ("cannot subtract " ++ show lt
+                                               ++ " from " ++ show rt) p
 
 mulValues :: Operator
 mulValues p t l@(lt, lo) r@(rt, ro)
@@ -369,12 +375,12 @@ mulValues p t l@(lt, lo) r@(rt, ro)
   | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
                                                 floatMul lhs rhs t
   | Types.integral lt && Types.pointer rt = ptrAdd ro lo t
-  | otherwise = throwError $ TypeError ("cannot multiply " ++ show l
-                                                 ++ " by " ++ show r) p
+  | otherwise = throwError $ TypeError ("cannot multiply " ++ show lt
+                                                 ++ " by " ++ show rt) p
 
 divValues :: Operator
 -- Unsigned division is special.
-divValues p t l@(Types.Unsigned _, lo) r@(Types.Unsigned _, ro) = do
+divValues p t l@(Types.Unsigned _, _) r@(Types.Unsigned _, _) = do
     (lhs, rhs) <- casted p l r t
     uintDiv lhs rhs t
 divValues p t l@(lt, lo) r@(rt, ro)
@@ -382,9 +388,31 @@ divValues p t l@(lt, lo) r@(rt, ro)
                                                 sintDiv lhs rhs t
   | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
                                                 floatDiv lhs rhs t
-  | otherwise = throwError $ TypeError ("cannot divide " ++ show l
-                                               ++ " by " ++ show r) p
+  | otherwise = throwError $ TypeError ("cannot divide " ++ show lt
+                                               ++ " by " ++ show rt) p
 
+makeComparison :: IPred.IntegerPredicate
+               -> IPred.IntegerPredicate
+               -> FPPred.FloatingPointPredicate
+               -> Operator
+-- Unsigned comparisons are special.
+makeComparison ipred upred fpred p t
+               l@(Types.Unsigned lbits, lo) r@(Types.Unsigned rbits, ro) = do
+    (lhs, rhs) <- casted p l r $ Types.Unsigned $ max lbits rbits
+    icmpFromCode upred lo ro
+makeComparison ipred upred fpred p t l@(lt, lo) r@(rt, ro)
+  | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r maxTy
+                                                icmpFromCode ipred lo ro
+  | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r maxTy
+                                                fcmpFromCode fpred lo ro
+  | Types.pointer lt && Types.pointer rt = icmpFromCode ipred lo ro
+  | otherwise = throwError $ TypeError ("cannot compare " ++ show lt
+                                              ++ " with " ++ show rt) p
+  where maxTy = max lt rt
+    
+
+lessComp = makeComparison IPred.SLT IPred.ULT FPPred.OLT
+lesseqComp = makeComparison IPred.SLE IPred.ULE FPPred.OLE
 
 --
 -- Type codegen.
@@ -564,3 +592,10 @@ sintDiv l r t = instr (LLInstr.SDiv False l r []) (translateType t)
 
 floatDiv :: Operand -> Operand -> Types.Type -> Codegen Operand
 floatDiv l r t = instr (LLInstr.FDiv NoFastMathFlags l r []) (translateType t)
+
+fcmpFromCode :: FPPred.FloatingPointPredicate -> Operand -> Operand
+             -> Codegen Operand
+fcmpFromCode code o1 o2 = instr (LLInstr.FCmp code o1 o2 []) LLTy.i1
+
+icmpFromCode :: IPred.IntegerPredicate -> Operand -> Operand -> Codegen Operand
+icmpFromCode code o1 o2 = instr (LLInstr.ICmp code o1 o2 []) LLTy.i1

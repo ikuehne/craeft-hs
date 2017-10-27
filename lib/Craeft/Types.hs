@@ -14,13 +14,13 @@ data Precision = SinglePrec | DoublePrec
 
 data Type = Struct [(String, Type)]
           | Pointer Type
-          | Signed Int
           | Unsigned Int
-          | Function [Type] Type
+          | Signed Int
           | Floating Precision
+          | Function [Type] Type
           | Opaque
           | Void
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 integral :: Type -> Bool
 integral (Signed _) = True
