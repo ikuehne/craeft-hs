@@ -107,7 +107,7 @@ class CheckOutputIntegrationTest(TempFileContextManager):
         expected_str = self.expected.decode(encoding="UTF-8")
         found_str = found.decode(encoding="UTF-8")
         msg = "output incorrect: Expected:\n{}\nGot:\n{}"\
-                    .format(expected_str, found_Str)
+                    .format(expected_str, found_str)
         assert found == self.expected, msg
 
     def run(self):
