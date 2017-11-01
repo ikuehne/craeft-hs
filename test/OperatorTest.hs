@@ -18,7 +18,23 @@ import System.Random
 
 import Integration
 
-cprog ltype rtype rettype lfmt rfmt retfmt = [i|
+operatorTests = testGroup "operator tests" $ makeOperatorTestSuite <$> [
+      ArithmeticOp (+) (+) "+" "addition"
+    , ArithmeticOp (-) (-) "-" "subtraction"
+    , ArithmeticOp quot (/) "/" "division"
+    , ArithmeticOp (*) (*) "*" "multiplication" ]
+
+--
+-- Building C harnesses.
+--
+
+-- | Build a simple C harness.
+--
+-- Declares a 2-argument function @craeftfn@, of type
+-- @ltype@ -> @rtype@ -> @rettype@.  Then reads in two command-line arguments
+-- using format strings @lfmt@ and @rfmt@, and prints out the result of
+-- @craeftfn@ on them using @retfmt@.
+simpleCHarness ltype rtype rettype lfmt rfmt retfmt = [i|
 
 #include <stdio.h>
 #include <stdint.h>
@@ -34,45 +50,67 @@ int main(int argc, char **argv) {
 
 |]
 
+-- | An even simpler C harness.
+--
+-- Like simpleCHarness, but assumes that both argument types and the return type
+-- are the same.
+monomorphicCHarness cType fmt = simpleCHarness cType cType cType fmt fmt fmt
 
-data ArithOp = ArithOp {
-    haskellIntOp :: forall a. (Integral a, Random a, Show a) => a -> a -> a
-  , haskellFracOp :: forall a. (Fractional a, Random a, Show a) => a -> a -> a
-  , craeftOp :: String
-  , name :: String
+--
+-- Building Craeft programs.
+--
+
+-- | Build a Craeft program which exports a single operator as a symbol.
+craeftOperatorProgram ltype rtype rettype op = [i|
+
+fn craeftfn(#{ltype} a, #{rtype} b) -> #{rettype} {
+    return a #{op} b;
 }
+
+|]
+
+-- | Like the above, but all types must be the same.
+monomorphicCraeftProgram craeftType =
+    craeftOperatorProgram craeftType craeftType craeftType
+
+--
+-- Representing Craeft operators for testing
+--
+
+-- | All of the information required to generate random tests for an operator.
+data ArithmeticOp = ArithmeticOp {
+    -- ^ The operator as applied to two identical integral arguments.
+    haskellIntOp :: forall a. (Integral a, Random a, Show a) => a -> a -> a
+    -- ^ The operator as applied to two identical fractional arguments.
+  , haskellFracOp :: forall a. (Fractional a, Random a, Show a) => a -> a -> a
+    -- ^ The Craeft name of the operator.
+  , craeftOp :: String
+    -- ^ The name to show in messages.
+  , name :: String }
 
 type Binary a = a -> a -> a
 
-makeOperatorTestSuite :: ArithOp -> TestTree
-makeOperatorTestSuite (ArithOp intOp floatOp craeftOp name) =
+-- | Make an arithmetic test for a given type.
+makeArithmeticTest operatorName typeName craeftTy cTy craeftOp fmt msg op =
+    testCase [i|#{typeName} #{operatorName} works|] $
+        programProperty (monomorphicCraeftProgram craeftTy craeftOp)
+                        (monomorphicCHarness cTy fmt)
+                        (\(a, b) -> [show a, show b])
+                        (\(a, b) -> assertEqual (msg a b) (op a b) . read)
+
+-- | Given an arithmetic op, generate a suite of tests for several types.
+makeOperatorTestSuite :: ArithmeticOp -> TestTree
+makeOperatorTestSuite (ArithmeticOp intOp floatOp craeftOp name) =
       testGroup (name ++ " tests")
-    [ makeProp (intOp :: Binary Int32) "32-bit" "I32" "int32_t" "%d"
-    , makeProp (intOp :: Binary Word32) "32-bit unsigned" "U32" "uint32_t" "%u"
-    , makeProp (floatOp :: Binary ApproxDouble) "double" "Double" "double" "%lg"
-    , makeProp (floatOp :: Binary ApproxFloat) "float" "Float" "float" "%g" ]
-  where testName typeName = typeName ++ " " ++ name ++ " works"
-        craeftprog craeftTy = [i|
-            fn craeftfn(#{craeftTy} a, #{craeftTy} b) -> #{craeftTy} {
-                return a #{craeftOp} b;
-            }
-        |]
-        makeCprog cty fmt = cprog cty cty cty fmt fmt fmt
-        msg a b = [i|check value of #{a} #{craeftOp} #{b}|]
-        makeProp hop name craeftTy cTy fmt =
-            testCase (testName name) $
-                programProperty (craeftprog craeftTy) (makeCprog cTy fmt)
-                                (\(a, b) -> [show a, show b])
-                                (\(a, b) -> assertEqual (msg a b) (hop a b)
-                                          . read)
-
-ops :: [ArithOp]
-ops = [ ArithOp (+) (+) "+" "addition"
-      , ArithOp (-) (-) "-" "subtraction"
-      , ArithOp quot (/) "/" "division"
-      , ArithOp (*) (*) "*" "multiplication"]
-
-operatorTests = testGroup "operator tests" $ makeOperatorTestSuite <$> ops
+    [ test "32-bit" "I32" "int32_t" "%d" (intOp :: Binary Int32)
+    , test "64-bit" "I64" "int64_t" "%lld" (intOp :: Binary Int64)
+    , test "32-bit unsigned" "U32" "uint32_t" "%u" (intOp :: Binary Word32) 
+    , test "64-bit unsigned" "U64" "uint64_t" "%llu" (intOp :: Binary Word64) 
+    , test "double" "Double" "double" "%lg" (floatOp :: Binary ApproxDouble) 
+    , test "float" "Float" "float" "%g" (floatOp :: Binary ApproxFloat)  ]
+  where msg a b = [i|check value of #{a} #{craeftOp} #{b}|]
+        test dispName craeftName cName fmt =
+          makeArithmeticTest name dispName craeftName cName craeftOp fmt msg
 
 --
 -- Approximate floating-point types.
@@ -113,7 +151,7 @@ instance Read ApproxFloat where
   readsPrec i s = [(ApproxFloat a, s) | (a, s) <- readsPrec i s]
 
 --
--- Other type tricks we need.
+-- @Random@ instance for tuples (how is this not already defined?)
 --
 
 instance (Random a, Random b) => Random (a, b) where
