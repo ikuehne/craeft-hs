@@ -1,5 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ExistentialQuantification, Rank2Types #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module OperatorTest ( operatorTests ) where
 
@@ -10,23 +11,25 @@ import Data.Word
 import Craeft.Parser as Parser
 import Craeft.Utility
 import Craeft.TypeChecker as TC
+import Data.String.Interpolate
 import Test.Tasty
 import Test.Tasty.HUnit
 import System.Random
 
 import           Framework
 
-cprog cop ltype rtype rettype lfmt rfmt retfmt = "#include <stdio.h>\n\
-\#include <stdint.h>\n" ++ rettype ++ 
- " craeftfn(" ++ ltype ++ ", " ++ rtype ++ ");\
-\int main(int argc, char **argv) {\
-\    " ++ ltype ++ " a;\
-\    " ++ rtype ++ " b;\
-\    sscanf(argv[1], \"" ++ lfmt ++ "\", &a);\ 
-\    sscanf(argv[2], \"" ++ rfmt ++ "\", &b);\ 
-\    printf(\"" ++ retfmt ++ "\", craeftfn(a, b));\
-\    return 0;\
-\}"
+cprog cop ltype rtype rettype lfmt rfmt retfmt = [i|#include <stdio.h>
+#include <stdint.h>
+#{rettype} craeftfn(#{ltype}, #{rtype});
+int main(int argc, char **argv) {
+    #{ltype} a;
+    #{rtype} b;
+    sscanf(argv[1], "#{lfmt}", &a);
+    sscanf(argv[2], "#{rfmt}", &b);
+    printf("#{retfmt}", craeftfn(a, b));
+    return 0;
+}
+|]
 
 
 data ArithOp = ArithOp {
