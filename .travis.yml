@@ -109,3 +109,6 @@ script:
       stack --no-terminal $ARGS test
       ;;
   esac
+
+notifications:
+  email: false
