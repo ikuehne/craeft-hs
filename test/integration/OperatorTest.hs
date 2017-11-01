@@ -1,7 +1,5 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ExistentialQuantification, Rank2Types #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module OperatorTest ( operatorTests ) where
 
@@ -51,7 +49,7 @@ makeOperatorTestSuite (ArithOp hop cop crop) = testGroup (crop ++ " tests") [
                                            "{ return a" ++ crop ++ "b; }"
         makeCprog cty fmt = cprog cop cty cty cty fmt fmt fmt
         msg a b = "check value of " ++ show a ++ " " ++ crop ++ " " ++ show b
-        makeProp (hop :: Binary a) name craeftTy cTy fmt =
+        makeProp hop name craeftTy cTy fmt =
             testCase (testName name) $
                 programProperty (craeftprog craeftTy) (makeCprog cTy fmt)
                                 (\(a, b) -> [show a, show b])

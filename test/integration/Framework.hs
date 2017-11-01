@@ -1,5 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module Framework (programProperty) where
 
 import           Control.Exception
