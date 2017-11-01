@@ -41,7 +41,7 @@ withCompiledCProgram :: String -- ^ The text of the C program to compile.
 withCompiledCProgram program action =
     Temp.withSystemTempFile "harness.o" $ \objfile objhandle -> do
         hClose objhandle
-        Proc.readProcess "gcc" ["-xc", "-", "-c", "-o", objfile] program
+        Proc.readProcess "gcc" ["-xc", "-w", "-", "-c", "-o", objfile] program
         action objfile
 
 withCompiledCraeftProgram :: String
