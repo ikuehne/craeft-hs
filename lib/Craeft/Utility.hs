@@ -17,6 +17,7 @@ module Craeft.Utility ( Annotated (..)
                       , prettyPrintError
                       , renderError ) where
 
+import Control.Exception (Exception)
 import Data.Maybe (maybe)
 import System.Console.ANSI
 import System.IO
@@ -45,6 +46,8 @@ data Error = ParseError String SourcePos
            | InternalError String
            | UsageError String
   deriving Show
+
+instance Exception Error
 
 -- | An exception monad with @Error@ as the error type.
 type CraeftExcept = Except Error
