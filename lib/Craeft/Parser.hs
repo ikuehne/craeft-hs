@@ -98,8 +98,12 @@ term = do p <- getPosition
 functionCall :: SourcePos -> ExpressionParser
 functionCall pos = flip Annotated pos <$>
     do fname <- AST.LValueExpr . AST.Variable <$> Lexer.identifier
-       (do args <- Lexer.parens $ Lexer.commaSep expr
-           return $ AST.FunctionCall (Annotated fname pos) args)
+       (do targs <- (do Lexer.openTemplate
+                        targs <- Lexer.commaSep typeParser
+                        Lexer.closeTemplate
+                        return targs) <|> return []
+           args <- Lexer.parens $ Lexer.commaSep expr
+           return $ AST.FunctionCall (Annotated fname pos) args targs)
           <|> return fname
 
 lvalue :: Parser AST.LValue
@@ -217,12 +221,17 @@ structDeclaration = (do Lexer.reserved "struct"
   where members = semiFollowed $ annotate declaration
 
 functionSignature :: Parser AST.FunctionSignature
-functionSignature = (do Lexer.reserved "fn"
-                        name <- Lexer.identifier
-                        args <- argList
-                        let void = Annotated AST.Void <$> getPosition
-                        ret <- (Lexer.arrow >> typeParser) <|> void
-                        return $ AST.FunctionSignature name args ret)
+functionSignature = (do
+      Lexer.reserved "fn"
+      name <- Lexer.identifier
+      targs <- (do Lexer.openTemplate
+                   targs <- Lexer.commaSep (annotate Lexer.tname)
+                   Lexer.closeTemplate
+                   return targs) <|> return []
+      args <- argList
+      let void = Annotated AST.Void <$> getPosition
+      ret <- (Lexer.arrow >> typeParser) <|> void
+      return $ AST.FunctionSignature name args targs ret)
     <?> "function signature"
   where argList = Lexer.parens $ Lexer.commaSep (annotate declaration)
 

@@ -21,6 +21,7 @@ import           Craeft.Utility
 data FunctionSignature = FunctionSignature {
     fnName :: String
   , args :: [Annotated ValueDeclaration]
+  , templateArgs :: [Annotated String]
   , retty :: Annotated Type
 } deriving Show
 
@@ -86,8 +87,9 @@ data Expression =
   | Binop { lhs :: Annotated Expression
           , op :: String
           , rhs :: Annotated Expression }
-  | FunctionCall { func :: Annotated Expression,
-                   callArgs :: [Annotated Expression] }
+  | FunctionCall { func :: Annotated Expression
+                 , callArgs :: [Annotated Expression]
+                 , typeArgs :: [Annotated Type] }
   -- ^ A type cast.
   | Cast { toType :: Annotated Type
          , value :: Annotated Expression }

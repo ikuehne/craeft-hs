@@ -96,7 +96,7 @@ exprToType = TAST.exprType . contents
 --
 -- Enters the function into the scope, and returns the TAST signature.
 typeCheckSig :: AST.FunctionSignature -> Checker TAST.FunctionSignature
-typeCheckSig (AST.FunctionSignature name args retty') = do
+typeCheckSig (AST.FunctionSignature name args _ retty') = do
     argtys <- mapM (typeCheckType . declToType) args
     retty <- typeCheckType retty'
     zoom variables $ Scope.insert name (Function argtys retty)
@@ -218,7 +218,7 @@ typeCheckExpr (Annotated expr p) =
                             op (exprToType checkedRhs)
         return (TAST.Binop checkedLhs op checkedRhs, ty)
     -- Use the return type of the function.
-    AST.FunctionCall f args -> do
+    AST.FunctionCall f args _ -> do
         checkedF <- typeCheckExpr f
         checkedArgs <- mapM typeCheckExpr args
         case exprToType checkedF of
