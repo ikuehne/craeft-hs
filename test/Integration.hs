@@ -1,4 +1,4 @@
-module Framework (programProperty) where
+module Integration (programProperty) where
 
 import           Control.Exception
 import           Control.Monad (forM_, when)

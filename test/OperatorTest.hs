@@ -16,7 +16,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import System.Random
 
-import           Framework
+import Integration
 
 cprog ltype rtype rettype lfmt rfmt retfmt = [i|
 
