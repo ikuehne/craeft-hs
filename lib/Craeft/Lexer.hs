@@ -93,3 +93,6 @@ equals = void $ reservedOp "="
 
 dot :: Parser ()
 dot = void $ Tok.dot lexer
+
+startLexer :: Parser ()
+startLexer = Tok.whiteSpace lexer

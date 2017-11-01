@@ -18,7 +18,9 @@ import System.Random
 
 import           Framework
 
-cprog cop ltype rtype rettype lfmt rfmt retfmt = [i|#include <stdio.h>
+cprog ltype rtype rettype lfmt rfmt retfmt = [i|
+
+#include <stdio.h>
 #include <stdint.h>
 #{rettype} craeftfn(#{ltype}, #{rtype});
 int main(int argc, char **argv) {
@@ -29,29 +31,34 @@ int main(int argc, char **argv) {
     printf("#{retfmt}", craeftfn(a, b));
     return 0;
 }
+
 |]
 
 
 data ArithOp = ArithOp {
-    haskellOp :: forall a. (Num a, Random a, Show a) => a -> a -> a
-  , cOp :: String
+    haskellIntOp :: forall a. (Integral a, Random a, Show a) => a -> a -> a
+  , haskellFracOp :: forall a. (Fractional a, Random a, Show a) => a -> a -> a
   , craeftOp :: String
+  , name :: String
 }
 
 type Binary a = a -> a -> a
 
 makeOperatorTestSuite :: ArithOp -> TestTree
-makeOperatorTestSuite (ArithOp hop cop crop) = testGroup (crop ++ " tests") [
-    makeProp (hop :: Binary Int32) "32-bit" "I32" "int32_t" "%d"
-  , makeProp (hop :: Binary Word32) "32-bit unsigned" "U32" "uint32_t" "%u"
-  , makeProp (hop :: Binary ApproxFloat) "float" "Float" "float" "%g" ]
-  where testName typeName = typeName ++ " " ++ crop ++ " works"
-        craeftprog craeftty = "fn craeftfn(" ++ craeftty ++
-                                           " a, " ++ craeftty ++
-                                           " b) -> " ++ craeftty ++
-                                           "{ return a" ++ crop ++ "b; }"
-        makeCprog cty fmt = cprog cop cty cty cty fmt fmt fmt
-        msg a b = "check value of " ++ show a ++ " " ++ crop ++ " " ++ show b
+makeOperatorTestSuite (ArithOp intOp floatOp craeftOp name) =
+      testGroup (name ++ " tests")
+    [ makeProp (intOp :: Binary Int32) "32-bit" "I32" "int32_t" "%d"
+    , makeProp (intOp :: Binary Word32) "32-bit unsigned" "U32" "uint32_t" "%u"
+    , makeProp (floatOp :: Binary ApproxDouble) "double" "Double" "double" "%lg"
+    , makeProp (floatOp :: Binary ApproxFloat) "float" "Float" "float" "%g" ]
+  where testName typeName = typeName ++ " " ++ name ++ " works"
+        craeftprog craeftTy = [i|
+            fn craeftfn(#{craeftTy} a, #{craeftTy} b) -> #{craeftTy} {
+                return a #{craeftOp} b;
+            }
+        |]
+        makeCprog cty fmt = cprog cty cty cty fmt fmt fmt
+        msg a b = [i|check value of #{a} #{craeftOp} #{b}|]
         makeProp hop name craeftTy cTy fmt =
             testCase (testName name) $
                 programProperty (craeftprog craeftTy) (makeCprog cTy fmt)
@@ -60,7 +67,10 @@ makeOperatorTestSuite (ArithOp hop cop crop) = testGroup (crop ++ " tests") [
                                           . read)
 
 ops :: [ArithOp]
-ops = [ ArithOp (+) "+" "+" ]
+ops = [ ArithOp (+) (+) "+" "addition"
+      , ArithOp (-) (-) "-" "subtraction"
+      , ArithOp quot (/) "/" "division"
+      , ArithOp (*) (*) "*" "multiplication"]
 
 operatorTests = testGroup "operator tests" $ makeOperatorTestSuite <$> ops
 

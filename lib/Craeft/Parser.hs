@@ -37,7 +37,7 @@ parsecToError e = ParseError (render $ E.errorMessages e) (E.errorPos e)
 
 craeftParse :: Parser a -> String -> String -> CraeftExcept a
 craeftParse p f s =
-  case Text.Parsec.parse p f s of
+  case Text.Parsec.parse (Lexer.startLexer >> p) f s of
     Left err     -> throwE $ parsecToError err
     Right result -> return result
 
