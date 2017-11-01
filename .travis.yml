@@ -18,7 +18,7 @@ cache:
   - $HOME/.ghc
   - $HOME/.cabal
   - $HOME/.stack
-  - $HOME/.stack-work
+  - $HOME/craeft-hs/.stack-work
   # This is important: LLVM takes forever to build.
   - $HOME/llvm-build-5.0.0
   - $HOME/llvm-src-5.0.0
