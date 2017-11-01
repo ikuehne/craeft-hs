@@ -508,7 +508,7 @@ toplevelCodegen (Annotated tl p) = case tl of
               Left err -> throwError err
               Right res -> return res
         codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
-        codegenSig (TAST.Sig name args retty) = do
+        codegenSig (TAST.Sig name args ntargs retty) = do
             cgState <- initCG <$> use env
             (fty, llretty, argtys) <- fmap fst $ runCgInLlvm $ do
                 let llretty = translateType retty

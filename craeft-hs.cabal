@@ -56,8 +56,7 @@ test-suite craeft-tests
   main-is:           Main.hs
   default-language:  Haskell2010
   other-modules:
-      AstInstances
-    , Integration
+      Integration
     , OperatorTest
     , ScopeTest
     , TypeCheckerTest

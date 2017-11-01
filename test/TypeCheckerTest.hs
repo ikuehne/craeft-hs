@@ -8,12 +8,8 @@ import Craeft.AST
 import Craeft.TypeChecker
 import Craeft.Scope as Scope
 import Test.Tasty
--- Randomly-generated ASTs from @AstInstances@ are basically guaranteed not to
--- typecheck, so we can't effectively use those to test the type-checker.
--- Instead we use HUnit for this part.
 import Test.Tasty.HUnit
 
-import AstInstances
 import Utility
 
 --
@@ -21,7 +17,7 @@ import Utility
 --
 
 funcWithBody = FunctionDefinition $
-    annotate (FunctionSignature "func" [] (annotate Void))
+    annotate (FunctionSignature "func" [] [] (annotate Void))
 
 shouldSucceed str program = testCase ("Typechecker fails on " ++ str) $
     case runExcept . typeCheck $ map annotate program of

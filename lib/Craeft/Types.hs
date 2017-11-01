@@ -19,6 +19,7 @@ data Type = Struct [(String, Type)]
           | Floating Precision
           | Function [Type] Type
           | Opaque
+          | Hole Int
           | Void
   deriving (Eq, Ord, Show)
 

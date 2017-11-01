@@ -18,7 +18,7 @@ import System.Random
 
 import Integration
 
-operatorTests = testGroup "operator tests" $ makeOperatorTestSuite <$> [
+operatorTests = testGroup "operator tests" $ map makeOperatorTestSuite [
       ArithmeticOp (+) (+) "+" "addition"
     , ArithmeticOp (-) (-) "-" "subtraction"
     , ArithmeticOp quot (/) "/" "division"

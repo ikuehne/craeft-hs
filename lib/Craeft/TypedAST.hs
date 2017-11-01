@@ -19,6 +19,7 @@ type Program = [Annotated TopLevel]
 
 data FunctionSignature = Sig { name :: String
                              , args :: [(String, Type)]
+                             , ntargs :: Int
                              , retty :: Type }
   deriving Show
 

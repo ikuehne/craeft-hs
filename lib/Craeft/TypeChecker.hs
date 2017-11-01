@@ -14,7 +14,7 @@ consistent in the process.
 
 module Craeft.TypeChecker ( typeCheck ) where
 
-import           Control.Monad ( sequence_, when )
+import           Control.Monad ( forM_, when )
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.List as List
@@ -96,12 +96,12 @@ exprToType = TAST.exprType . contents
 --
 -- Enters the function into the scope, and returns the TAST signature.
 typeCheckSig :: AST.FunctionSignature -> Checker TAST.FunctionSignature
-typeCheckSig (AST.FunctionSignature name args _ retty') = do
+typeCheckSig (AST.FunctionSignature name args targs retty') = do
     argtys <- mapM (typeCheckType . declToType) args
     retty <- typeCheckType retty'
     zoom variables $ Scope.insert name (Function argtys retty)
     let typedArgs = zip (map (AST.name . contents) args) argtys
-        typedSig = TAST.Sig name typedArgs retty
+        typedSig = TAST.Sig name typedArgs (length targs) retty
     return typedSig
 
 -- | Type-check a top-level form.
@@ -125,8 +125,10 @@ typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
     AST.FunctionDefinition (Annotated sig _) body -> do
         checkedSig <- typeCheckSig sig
         nested $ do
-            sequence_ [zoom variables $ Scope.insert name ty
-                          | (name, ty) <- TAST.args checkedSig]
+            forM_ (TAST.args checkedSig) $ \(name, ty) ->
+                 zoom variables $ Scope.insert name ty
+            forM_ (zip [1..] $ map contents $ AST.templateArgs sig) $
+                 \(i, name) -> zoom types $ Scope.insert name (Hole i)
             let checkStmt s = typeCheckStatement s (TAST.retty checkedSig) 
             checkedBody <- mapM checkStmt body
             return $ TAST.Function checkedSig checkedBody
@@ -161,8 +163,7 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         when (lhsTy /= exprToType checkedRhs) $
             throw p "assigning to variable of different type"
         return $ TAST.Assignment checkedLhs checkedRhs
-    AST.Declaration decl ->
-        TAST.Declaration (AST.name decl) <$> checkDecl decl
+    AST.Declaration decl -> TAST.Declaration (AST.name decl) <$> checkDecl decl
     AST.CompoundDeclaration decl e -> do
         -- Get the declared type,
         expected <- checkDecl $ contents decl
