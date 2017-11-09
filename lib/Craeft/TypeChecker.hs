@@ -89,8 +89,8 @@ declToType :: Annotated AST.ValueDeclaration -> Annotated AST.Type
 declToType (Annotated (AST.ValueDeclaration ty _) p) = Annotated ty p
 
 -- | Get the type of an annotated TAST expression.
-exprToType :: Annotated TAST.Expression -> Type
-exprToType = TAST.exprType . contents
+exprType :: Lens' (Annotated TAST.Expression) Type
+exprType = contents . TAST.exprType
 
 -- | Run the type-checker on a function signature.
 --
@@ -100,7 +100,7 @@ typeCheckSig (AST.FunctionSignature name args targs retty') = do
     argtys <- mapM (typeCheckType . declToType) args
     retty <- typeCheckType retty'
     zoom variables $ Scope.insert name (Function argtys retty)
-    let typedArgs = zip (map (AST.name . contents) args) argtys
+    let typedArgs = zip (map (AST.name . view contents) args) argtys
         typedSig = TAST.Sig name typedArgs (length targs) retty
     return typedSig
 
@@ -112,7 +112,7 @@ typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
         -- Allow recursive types.
         zoom types $ Scope.insert name Opaque
         memberTypes <- mapM (typeCheckType . declToType) members
-        let names = map (AST.name . contents) members
+        let names = map (AST.name . view contents) members
             memberAssocList = zip names memberTypes
         zoom types $ Scope.insert name $ Struct memberAssocList
         return $ TAST.StructDeclaration name memberAssocList
@@ -125,11 +125,11 @@ typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
     AST.FunctionDefinition (Annotated sig _) body -> do
         checkedSig <- typeCheckSig sig
         nested $ do
-            forM_ (TAST.args checkedSig) $ \(name, ty) ->
+            forM_ (checkedSig ^. TAST.args) $ \(name, ty) ->
                  zoom variables $ Scope.insert name ty
-            forM_ (zip [1..] $ map contents $ AST.templateArgs sig) $
+            forM_ (zip [1..] $ map (view contents) $ AST.templateArgs sig) $
                  \(i, name) -> zoom types $ Scope.insert name (Hole i)
-            let checkStmt s = typeCheckStatement s (TAST.retty checkedSig) 
+            let checkStmt s = typeCheckStatement s (checkedSig ^. TAST.retty) 
             checkedBody <- mapM checkStmt body
             return $ TAST.Function checkedSig checkedBody
 
@@ -141,12 +141,12 @@ typeCheckStatement :: Annotated AST.Statement
 typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
     AST.ExpressionStatement e ->
         -- Simple: just unwrap and type-check the expression.
-        TAST.ExpressionStmt . contents <$> typeCheckExpr e
+        TAST.ExpressionStmt . view contents <$> typeCheckExpr e
     AST.Return e -> do
         -- Type-check the expression to be returned,
         checkedExpr <- typeCheckExpr e
         -- and check that it matches the expected return type.
-        when (exprToType checkedExpr /= retty) $
+        when (checkedExpr ^. exprType /= retty) $
             throw p "returned value does not match expected return type"
         return $ TAST.Return checkedExpr
     AST.VoidReturn -> do
@@ -160,26 +160,26 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
         -- and the right hand side.
         checkedRhs <- typeCheckExpr rhs
         -- Make sure they're compatible.
-        when (lhsTy /= exprToType checkedRhs) $
+        when (lhsTy /= checkedRhs ^. exprType) $
             throw p "assigning to variable of different type"
         return $ TAST.Assignment checkedLhs checkedRhs
     AST.Declaration decl -> TAST.Declaration (AST.name decl) <$> checkDecl decl
     AST.CompoundDeclaration decl e -> do
         -- Get the declared type,
-        expected <- checkDecl $ contents decl
+        expected <- checkDecl $ decl ^. contents
         -- and the type of the initializer expression.
         found <- typeCheckExpr e
         -- Check that they match.
-        when (expected /= exprToType found) $
+        when (expected /= found ^. exprType) $
             throw p "compound assignment type mismatch"
         -- Extract the variable name from the declaration.
-        let name = AST.name $ contents decl
+        let name = AST.name $ decl ^. contents
         return $ TAST.CompoundDeclaration name expected found
     AST.IfStatement cond ifb elseb -> do
         -- Type-check the condition.
         checkedCond <- typeCheckExpr cond
         -- Make sure it's a boolean.
-        when (exprToType checkedCond /= Unsigned 1) $
+        when (checkedCond ^. exprType /= Unsigned 1) $
             throw p "if condition must be U1"
         -- Check the `if` block (in a new scope).
         checkedIf <- nested $ mapM checkStmt ifb
@@ -210,21 +210,21 @@ typeCheckExpr (Annotated expr p) =
     -- Return a pointer to the inner type.
     AST.Reference lvalue -> do 
         (ty, lv) <- typeCheckLValue p lvalue
-        return (TAST.Reference $ contents lv, Pointer ty)
+        return (TAST.Reference $ lv ^. contents, Pointer ty)
     -- This is hard--pass it on to @inferBinopType@.
     AST.Binop lhs op rhs -> do
         checkedLhs <- typeCheckExpr lhs
         checkedRhs <- typeCheckExpr rhs
-        ty <- inferBinopType p (exprToType checkedLhs)
-                            op (exprToType checkedRhs)
+        ty <- inferBinopType p (checkedLhs ^. exprType)
+                            op (checkedRhs ^. exprType)
         return (TAST.Binop checkedLhs op checkedRhs, ty)
     -- Use the return type of the function.
     AST.FunctionCall f args _ -> do
         checkedF <- typeCheckExpr f
         checkedArgs <- mapM typeCheckExpr args
-        case exprToType checkedF of
+        case checkedF ^. exprType of
             Function args ret -> do
-                when (map exprToType checkedArgs /= args) $
+                when (map (view exprType) checkedArgs /= args) $
                     throw p "argument types do not match function signature"
                 return (TAST.FunctionCall checkedF checkedArgs, ret)
             _ -> throw p "cannot call non-function"
@@ -238,7 +238,7 @@ typeCheckExpr (Annotated expr p) =
     -- them using a load; the type checker *does not do that*.
     AST.LValueExpr lv -> do
         (ty, checkedLv) <- typeCheckLValue p lv
-        return (TAST.LValueExpr $ contents checkedLv, ty)
+        return (TAST.LValueExpr $ checkedLv ^. contents, ty)
 
 -- Some useful divisions of the operators.  Each of these sets has the same way
 -- of calculating the result types.
@@ -325,11 +325,11 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
         return (ty, TAST.Dereference (Annotated contents p') t)
     AST.FieldAccess e n -> do
         str <- typeCheckExpr (Annotated e p)
-        case exprToType str of 
+        case str ^. exprType of 
             Struct fields -> do
                 (ty, i) <- liftMaybe (TypeError "no such field in struct" p)
                                      (lookupI n fields)
-                let strExpr = TAST.exprContents $ contents str
+                let strExpr = str ^. contents . TAST.exprContents
                 return (ty, TAST.FieldAccess strExpr fields i)
             _ -> throw p "cannot access field of non-struct value"
   where lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]

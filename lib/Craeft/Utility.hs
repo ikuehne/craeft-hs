@@ -7,16 +7,22 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
+{-# LANGUAGE TemplateHaskell #-}
+
 module Craeft.Utility ( Annotated (..)
+                      , contents
+                      , pos
                       , Error (..)
                       , CraeftExcept
                       , bracketed
                       , liftMaybe
+                      , liftPos
                       , CraeftMonad
                       , module Text.Parsec.Pos
                       , prettyPrintError
                       , renderError ) where
 
+import Control.Lens
 import Control.Exception (Exception)
 import Data.Maybe (maybe)
 import System.Console.ANSI
@@ -68,7 +74,7 @@ bracketed cleanup action = do
 -- | Bring a @Maybe@ into a @CraeftMonad@
 --
 -- Throw the given error on @Nothing@.
-liftMaybe :: Error -> Maybe a -> CraeftMonad s a
+liftMaybe :: MonadError e m => e -> Maybe a -> m a
 liftMaybe e = maybe (throwError e) return
 
 prettyPrintError :: Error -> IO ()
@@ -88,9 +94,11 @@ renderError (UsageError msg) = withHeader "usage error" msg
 renderHelper header msg p = renderPos p ++ ": " ++ withHeader header msg
 withHeader header msg = header ++ ": " ++ msg
 
--- | Data @Annotated@ with a source position.
-data Annotated a = Annotated { contents :: a, pos :: SourcePos }
-  deriving Show
+instance Functor Annotated where
+  fmap f (Annotated contents pos) = Annotated (f contents) pos
+
+liftPos :: Monad m => Annotated (m a) -> m (Annotated a)
+liftPos (Annotated m p) = flip Annotated p <$> m
 
 headerColor :: IO ()
 headerColor = hSetSGR stderr [SetColor Foreground Vivid Red]
@@ -103,6 +111,7 @@ put = hPutStr stderr
 
 putln :: String -> IO ()
 putln = hPutStrLn stderr
+
 
 renderPos pos = sourceName pos ++ ":"
              ++ show (sourceLine pos) ++ ":"
@@ -120,3 +129,9 @@ printWithHeader header msg = do
     resetColor
     put ": "
     putln msg
+
+-- | Data @Annotated@ with a source position.
+data Annotated a = Annotated { _contents :: a, _pos :: SourcePos }
+  deriving Show
+
+makeLenses ''Annotated

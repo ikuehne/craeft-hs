@@ -13,6 +13,7 @@ module Craeft.Parser ( parseExpression
                      , parseTopLevel
                      , parseProgram ) where
 
+import           Control.Lens
 import           Control.Monad
 
 import           Control.Monad.Trans.Except
@@ -116,11 +117,11 @@ fieldAccess :: Parser AST.LValue
 fieldAccess = do e <- expr
                  Lexer.dot
                  (AST.Variable v) <- variable
-                 return $ AST.FieldAccess (contents e) v
+                 return $ AST.FieldAccess (e ^. contents) v
 
 dereference :: Parser AST.LValue
 dereference = (do Lexer.reservedOp "*"
-                  AST.Dereference . contents <$> expr) <?> "dereference"
+                  AST.Dereference . view contents <$> expr) <?> "dereference"
 
 fieldAccessOp = Infix ((do pos <- getPosition
                            Lexer.reservedOp "."
@@ -149,7 +150,7 @@ typeParser :: Parser (Annotated AST.Type)
 typeParser = do p <- getPosition
                 n <- Lexer.tname
                 let name = Annotated (AST.NamedType n) p
-                ptrs <- map pos <$> many (annotate $ Lexer.reservedOp "*")
+                ptrs <- map _pos <$> many (annotate $ Lexer.reservedOp "*")
                 let aux pos t = Annotated (AST.Pointer t) pos
                 return $ foldr aux name ptrs
 
@@ -179,14 +180,14 @@ assignment = do p <- getPosition
 declaration :: Parser AST.ValueDeclaration
 declaration = do t <- typeParser
                  AST.Variable v <- variable
-                 return $ AST.ValueDeclaration (contents t) v
+                 return $ AST.ValueDeclaration (t ^. contents) v
 
 compoundDeclaration :: Parser AST.Statement
 compoundDeclaration = do d <- annotate declaration
                          (do Lexer.equals
                              e <- expr
                              return $ AST.CompoundDeclaration d e)
-                           <|> return (AST.Declaration $ contents d)
+                           <|> return (AST.Declaration $ d ^. contents)
 
 semiFollowed :: Parser a -> Parser [a]
 semiFollowed p = many $ do s <- p
@@ -241,4 +242,4 @@ functionDefinition = annotate functionSignature >>= fnDeclOrDef
 fnDeclOrDef :: Annotated AST.FunctionSignature -> Parser AST.TopLevel
 fnDeclOrDef sig = (AST.FunctionDefinition sig <$> Lexer.braces block
                     <?> "function definition")
-                <|> (Lexer.semi >> return (AST.FunctionDecl $ contents sig))
+                <|> (Lexer.semi >> return (AST.FunctionDecl $ sig ^. contents))

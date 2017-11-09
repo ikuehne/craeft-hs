@@ -26,7 +26,10 @@ library
     , Craeft.TypeChecker
     , Craeft.Types
     , Craeft.Scope
+    , Craeft.TemplateFiller
     , Craeft.TypedAST
+    , Craeft.TypedAST.Impl
+    , Craeft.TypedAST.Lens
   default-language:    Haskell2010
   build-depends:
       base                 >= 4.0

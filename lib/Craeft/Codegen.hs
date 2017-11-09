@@ -215,17 +215,17 @@ addDefn d = do
 
 -- | Codegen an l-value, returning a pointer to the referenced value.
 lvalueCodegen :: Types.Type -> Annotated TAST.LValue -> Codegen Value
-lvalueCodegen t a = case contents a of
+lvalueCodegen t a = case a^.contents of
     -- Variables are already stored as pointers.
     TAST.Variable s -> zoom symtab $ Scope.lookup s p
     -- Codegen'ing a pointer to a dereference is just codegen'ing the referand.
     TAST.Dereference ptr referandTy ->
-        let expr = TAST.Expression (contents ptr) (Types.Pointer referandTy)
-         in (t,) <$> exprCodegen (Annotated expr $ pos ptr)
+        let expr = TAST.Expression (ptr^.contents) (Types.Pointer referandTy)
+         in (t,) <$> exprCodegen (Annotated expr $ ptr ^. pos)
     -- Get a pointer to the struct, and this is just a GEP.
     TAST.FieldAccess str members i -> do
         let structTy = Types.Struct members
-        (_, val) <- case TAST.exprContents (TAST.Expression str structTy) of
+        (_, val) <- case TAST.Expression str structTy ^. TAST.exprContents of
             TAST.LValueExpr l -> lvalueCodegen (Types.Struct members)
                                                (Annotated l p)
             _ -> throw "cannot assign to r-value struct"
@@ -233,12 +233,12 @@ lvalueCodegen t a = case contents a of
             llt = translateType t
         op <- instr gep llt
         return (t, op)
-  where p = pos a
+  where p = a^.pos
         throw = throwError . flip TypeError p
 
 -- | Codegen an expression as an operand/type pair.
 exprCodegen :: Annotated TAST.Expression -> Codegen Operand
-exprCodegen a = case TAST.exprContents $ contents a of
+exprCodegen a = case a ^. contents . TAST.exprContents of
     -- Literals are just constant operands.
     TAST.IntLiteral i -> return $ constInt i
     TAST.UIntLiteral i -> return $ constInt i
@@ -269,8 +269,8 @@ exprCodegen a = case TAST.exprContents $ contents a of
         lhs <- exprCodegen l
         rhs <- exprCodegen r
         let msg = "no such op: " ++ op
-            lty = TAST.exprType $ contents l
-            rty = TAST.exprType $ contents r
+            lty = l ^. contents . TAST.exprType
+            rty = r ^. contents . TAST.exprType
         -- Use the @ops@ map to lookup that operation.
         f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
         f p ty (lty, lhs) (rty, rhs)
@@ -293,7 +293,7 @@ exprCodegen a = case TAST.exprContents $ contents a of
             -- (Functions are a special case.)
             Types.Function _ _ -> return lvOp
     other -> error $ show other
-  where p = pos a
+  where p = a ^. pos
         ops = Map.fromList [ ("+", addValues)
                            , ("-", subValues)
                            , ("*", mulValues)
@@ -304,7 +304,7 @@ exprCodegen a = case TAST.exprContents $ contents a of
                            , (">=", greaterEqComp)
                            , ("==", eqComp)
                            , ("!=", neqComp) ]
-        ty = TAST.exprType $ contents a
+        ty = a ^. contents . TAST.exprType
         llty = translateType ty
 
 --
@@ -414,7 +414,6 @@ makeComparison ipred upred fpred p t l@(lt, lo) r@(rt, ro)
   | otherwise = throwError $ TypeError ("cannot compare " ++ show lt
                                               ++ " with " ++ show rt) p
   where maxTy = max lt rt
-    
 
 lessComp = makeComparison IPred.SLT IPred.ULT FPPred.OLT
 lessEqComp = makeComparison IPred.SLE IPred.ULE FPPred.OLE
@@ -450,7 +449,7 @@ stmtCodegen (Annotated stmt p) = case stmt of
         terminate $ LLInstr.Ret (Just retval) []
     TAST.VoidReturn -> terminate $ LLInstr.Ret Nothing []
     TAST.Assignment lhs rhs -> do
-        (_, lhsAddr) <- lvalueCodegen (Types.Pointer $ exprTy rhs) lhs
+        (_, lhsAddr) <- lvalueCodegen (Types.Pointer $ rhs ^. exprTy) lhs
         rhsExpr <- exprCodegen rhs
         voidInstr $ LLInstr.Store False lhsAddr rhsExpr Nothing 0 []
     TAST.Declaration n ty -> void $ declare n ty
@@ -480,7 +479,7 @@ stmtCodegen (Annotated stmt p) = case stmt of
             mapM_ stmtCodegen elseB
 
         switchBlock ifmerge
-  where exprTy = TAST.exprType . contents
+  where exprTy = contents . TAST.exprType
         declare n ty = do
             let llty = translateType ty
             alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
@@ -492,14 +491,14 @@ toplevelCodegen (Annotated tl p) = case tl of
     TAST.Function sig body -> do
         (args, retty) <- codegenSig sig
         (_, cgState) <- runCgInLlvm $ do
-            fnBlock <- addBlock (TAST.name sig)
-            inBlock fnBlock $ do mapM_ declareArg (TAST.args sig)
+            fnBlock <- addBlock $ sig ^. TAST.name
+            inBlock fnBlock $ do mapM_ declareArg (sig ^. TAST.args)
                                  mapM_ stmtCodegen body
         addCgGlobals cgState
-        define retty (TAST.name sig) args (createBlocks cgState)
+        define retty (sig ^. TAST.name) args (createBlocks cgState)
     TAST.FunctionDecl sig -> do
         (args, retty) <- codegenSig sig
-        define retty (TAST.name sig) args []
+        define retty (sig ^. TAST.name) args []
   where runCgInLlvm :: Codegen a -> LLVM (a, CodegenState)
         runCgInLlvm cg = do
           cgState <- initCG <$> use env
