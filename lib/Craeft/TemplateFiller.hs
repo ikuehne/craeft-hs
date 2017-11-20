@@ -77,7 +77,9 @@ templatizeBlock :: Templatizer Block
 templatizeBlock = each.contents %%~ templatizeStatement
 
 templatizeSig :: Templatizer FunctionSignature
-templatizeSig = args.each._2 %%~ fillType >=> retty %%~ fillType
+templatizeSig = args.each._2 %%~ fillType
+            >=> retty %%~ fillType
+            >=> ntargs %%~ const (pure 0)
 
 templatizeFunction :: Templatizer (FunctionSignature, Block)
 templatizeFunction = _1 %%~ templatizeSig >=> _2 %%~ templatizeBlock
@@ -91,7 +93,7 @@ fillType :: Type -> Templatize Type
 fillType (Hole i) = do p <- asks instancePos
                        maybeHole <- Map.lookup i <$> holesMap
                        liftMaybe (noSuchHole i p) maybeHole
-  where holesMap = Map.fromList . zip [0..] <$> asks templateArgs
+  where holesMap = Map.fromList . zip [1..] <$> asks templateArgs
         noSuchHole i = TypeError ("no such hole: " ++ show i)
 fillType (Struct fields) = Struct <$> (each._2 %%~ fillType) fields
 fillType other = return other

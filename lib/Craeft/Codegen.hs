@@ -14,6 +14,7 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE Rank2Types #-}
 
 module Craeft.Codegen ( codegen ) where
 
@@ -58,10 +59,6 @@ data CodegenState = CodegenState {
  , _blocks       :: Map.Map Name BlockState
     -- ^ A @Scope@ from identifiers to values.
  , _symtab       :: Scope.ScopeState Value
-    -- ^ A map from identifiers to expandable functions.
- , _functionTab  :: Map.Map String (TAST.FunctionSignature, TAST.Block)
-    -- ^ A map from mangled labels to template specializations.
- , _specializations :: Map.Map String TAST.TopLevel
     -- ^ The number of blocks in this @Codegen@.
  , _blockCount   :: Int
     -- ^ The register we are up to.
@@ -84,8 +81,6 @@ initCG :: Scope.ScopeState Value -> CodegenState
 initCG st = CodegenState { _currentBlock = Name "main"
                          , _blocks = Map.empty
                          , _symtab = st
-                         , _functionTab = Map.empty
-                         , _specializations = Map.empty
                          , _blockCount = 0
                          , _count = 0
                          , _globals = []
@@ -97,8 +92,13 @@ data BlockState
                , _stack :: [Named Instruction]
                , _term  :: Maybe (Named Terminator) }
 
-data LlvmState = LlvmState { _llmod :: Module
-                           , _env :: Scope.ScopeState Value }
+type Specialization = (String, TAST.FunctionSignature, TAST.Block)
+
+data LlvmState = LlvmState {
+    _llmod :: Module
+      -- ^ A map from identifiers to expandable functions.
+    , _functionTab  :: Map.Map String (TAST.FunctionSignature, TAST.Block)
+    , _env :: Scope.ScopeState Value }
 
 -- All of these are lensey.
 makeLenses ''BlockState
@@ -111,6 +111,7 @@ type LLVM a = CraeftMonad LlvmState a
 -- | The initial @LlvmState@ for a fresh program.
 initLLVM :: LlvmState
 initLLVM = LlvmState { _llmod = defaultModule
+                     , _functionTab = Map.empty
                      , _env = Scope.empty }
 
 -- | The codegen entry point.
@@ -236,22 +237,27 @@ mangle ts fname = (fname ++) $ intercalate ".$" $ map makeName ts
   where makeName _ = "typename"
 
 specialize :: [Types.Type] -> SourcePos -> TAST.FunctionSignature -> TAST.Block
-           -> Codegen ()
+           -> LLVM [Specialization]
 specialize ts p sig block = do
-    ((nsig@(TAST.Sig name _ _ _), filled), others) <- lift $ runWriterT writer
-    specializations %= Map.insert (mangle ts name) (TAST.Function nsig filled)
-    -- fname <- case thisOne of
-    --    Expression (LValueExpr (Variable s)) -> return s
-    --    _ -> throwError $
-    --        TypeError "cannot expand function not refered to by name" p
+      ((nsig@(TAST.Sig name _ _ _), filled), others) <- lift $ runWriterT writer
+      return [(mangle ts name, (TAST.name %~ mangle ts) nsig, filled)]
   where writer = Templ.fillFunction ts p (sig, block)
 
-specializeByName :: [Types.Type] -> SourcePos -> String -> Codegen ()
-specializeByName ts p n = do
-    (sig, block) <- uses functionTab (Map.! n)
-    specialize ts p sig block
+specializeByName :: [Types.Type] -> SourcePos -> String -> LLVM [Specialization]
+specializeByName ts p n = uses functionTab (Map.! n)
+                      >>= uncurry (specialize ts p)
 
--- Before we codegen a function, get its 
+specializeAll :: TAST.Block -> LLVM TAST.Block
+specializeAll = blockFunctionCalls (\(Annotated e p, args, ts) -> do 
+    let fnameLens :: Traversal' TAST.Expression String
+        fnameLens = TAST.exprContents.TAST.lvalueExpr.TAST.lvalueVarName
+    n <- liftMaybe (TypeError "cannot expand function not refered to by name" p)
+                 $ e ^? fnameLens
+    specializations <- specializeByName ts p n
+    forM_ specializations $ \(name, sig, block) ->
+        toplevelCodegen (Annotated (TAST.Function sig block) p)
+    let e' = (fnameLens %~ mangle ts) e
+    return (Annotated e' p, args, ts))
 
 --
 -- Expression codegen.
@@ -527,26 +533,32 @@ stmtCodegen (Annotated stmt p) = case stmt of
             zoom symtab $ Scope.insert n (Types.Pointer ty, alloca)
             return alloca
 
+runCgInLlvm :: Codegen a -> LLVM (a, CodegenState)
+runCgInLlvm cg = do
+    cgState <- initCG <$> use env
+    let maybeSt = runStateT cg cgState
+    case runIdentity $ runExceptT maybeSt of
+        Left err -> throwError err
+        Right res -> return res
+
 toplevelCodegen :: Annotated TAST.TopLevel -> LLVM ()
 toplevelCodegen (Annotated tl p) = case tl of
     TAST.Function sig body -> do
-        (args, retty) <- codegenSig sig
-        (_, cgState) <- runCgInLlvm $ do
-            fnBlock <- addBlock $ sig ^. TAST.name
-            inBlock fnBlock $ do mapM_ declareArg (sig ^. TAST.args)
-                                 mapM_ stmtCodegen body
-        addCgGlobals cgState
-        define retty (sig ^. TAST.name) args (createBlocks cgState)
+        when (sig^.TAST.ntargs == 0) $ do
+            body' <- specializeAll body
+            (args, retty) <- codegenSig sig
+            (_, cgState) <- runCgInLlvm $ do
+                fnBlock <- addBlock $ sig ^. TAST.name
+                inBlock fnBlock $ do mapM_ declareArg (sig ^. TAST.args)
+                                     mapM_ stmtCodegen body
+            addCgGlobals cgState
+            define retty (sig ^. TAST.name) args (createBlocks cgState)
+        when (sig^.TAST.ntargs /= 0) $
+            functionTab %= Map.insert (sig^.TAST.name) (sig, body)
     TAST.FunctionDecl sig -> do
         (args, retty) <- codegenSig sig
         define retty (sig ^. TAST.name) args []
-  where runCgInLlvm :: Codegen a -> LLVM (a, CodegenState)
-        runCgInLlvm cg = do
-          cgState <- initCG <$> use env
-          let maybeSt = runStateT cg cgState
-          case runIdentity $ runExceptT maybeSt of
-              Left err -> throwError err
-              Right res -> return res
+  where 
         codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
         codegenSig (TAST.Sig name args ntargs retty) = do
             cgState <- initCG <$> use env

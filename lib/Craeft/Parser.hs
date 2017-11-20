@@ -16,6 +16,8 @@ module Craeft.Parser ( parseExpression
 import           Control.Lens
 import           Control.Monad
 
+import           Debug.Trace (trace, traceM)
+
 import           Control.Monad.Trans.Except
 import           Text.Parsec hiding ( SourcePos )
 import           Text.Parsec.String (Parser)
@@ -224,11 +226,11 @@ structDeclaration = (do Lexer.reserved "struct"
 functionSignature :: Parser AST.FunctionSignature
 functionSignature = (do
       Lexer.reserved "fn"
-      name <- Lexer.identifier
       targs <- (do Lexer.openTemplate
                    targs <- Lexer.commaSep (annotate Lexer.tname)
                    Lexer.closeTemplate
                    return targs) <|> return []
+      name <- Lexer.identifier
       args <- argList
       let void = Annotated AST.Void <$> getPosition
       ret <- (Lexer.arrow >> typeParser) <|> void
