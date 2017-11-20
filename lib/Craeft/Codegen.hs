@@ -18,6 +18,8 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 
 module Craeft.Codegen ( codegen ) where
 
+import           Debug.Trace (traceM)
+
 import           Data.Function (on)
 import           Data.String (fromString)
 import           Control.Monad.Except
@@ -147,7 +149,10 @@ voidInstr :: Instruction -> Codegen ()
 voidInstr ins = modifyBlock $ stack %~ (Do ins :)
 
 instr :: Instruction -> Type -> Codegen Operand
-instr _ VoidType = throwError $ InternalError "attempt to name void instruction"
+instr i VoidType = do voidInstr i
+                      count %= succ
+                      ref <- UnName <$> use count
+                      return $ LocalReference VoidType ref
 instr ins t = do count %= succ
                  ref <- UnName <$> use count
                  modifyBlock $ stack %~ ((ref := ins) :)
@@ -322,6 +327,7 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
         f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
         f p ty (lty, lhs) (rty, rhs)
     TAST.FunctionCall f args typeArgs -> do
+        traceM "Function call"
         func <- exprCodegen f
 
         -- Codegen each of the arguments.
@@ -329,7 +335,10 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
         -- Zip 'em with their metadata (for now, nothing).
         let args' = zip args'' $ repeat []
             inst = LLInstr.Call Nothing CConv.C [] (Right func) args' [] []
-        instr inst llty
+        traceM $ "result type: " ++ show llty
+        res <- instr inst llty
+        traceM "got result"
+        return res
     -- Just dereference the codegen'ed l-value.
     TAST.LValueExpr lv -> do
         (lvTy, lvOp) <- lvalueCodegen ty (Annotated lv p)
@@ -550,11 +559,12 @@ toplevelCodegen (Annotated tl p) = case tl of
             (_, cgState) <- runCgInLlvm $ do
                 fnBlock <- addBlock $ sig ^. TAST.name
                 inBlock fnBlock $ do mapM_ declareArg (sig ^. TAST.args)
-                                     mapM_ stmtCodegen body
+                                     mapM_ stmtCodegen body'
             addCgGlobals cgState
             define retty (sig ^. TAST.name) args (createBlocks cgState)
         when (sig^.TAST.ntargs /= 0) $
             functionTab %= Map.insert (sig^.TAST.name) (sig, body)
+
     TAST.FunctionDecl sig -> do
         (args, retty) <- codegenSig sig
         define retty (sig ^. TAST.name) args []
