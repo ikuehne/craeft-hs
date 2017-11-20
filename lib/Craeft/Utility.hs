@@ -7,10 +7,13 @@ Maintainer  : ikuehne@caltech.edu
 Stability   : experimental
 -}
 
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Craeft.Utility ( Annotated (..)
                       , contents
+                      , foldTraversals
+                      , (!.)
                       , pos
                       , Error (..)
                       , CraeftExcept
@@ -18,6 +21,7 @@ module Craeft.Utility ( Annotated (..)
                       , liftMaybe
                       , liftPos
                       , CraeftMonad
+                      , MTraversal
                       , module Text.Parsec.Pos
                       , prettyPrintError
                       , renderError ) where
@@ -130,8 +134,17 @@ printWithHeader header msg = do
     put ": "
     putln msg
 
+-- | This almost certainly exists somewhere in some form already...
+foldTraversals ts f c = foldr ((*>) . ($ c) . ($ f)) (pure c) ts
+
+type MTraversal a b = forall m. Monad m => (b -> m b) -> a -> m a
+
 -- | Data @Annotated@ with a source position.
 data Annotated a = Annotated { _contents :: a, _pos :: SourcePos }
   deriving Show
 
 makeLenses ''Annotated
+
+-- | Access `l2` of the contents of `l1`.
+(!.) l1 l2 = l1 . contents . l2
+infixr 9 !.

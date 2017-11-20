@@ -58,8 +58,9 @@ data ExpressionContents = IntLiteral { _signedLit :: Integer }
                         | Binop { _lhs :: Annotated Expression
                                 , _op :: String
                                 , _rhs :: Annotated Expression }
-                        | FunctionCall { _func :: Annotated Expression,
-                                         _callArgs :: [Annotated Expression] }
+                        | FunctionCall { _func :: Annotated Expression
+                                       , _callArgs :: [Annotated Expression]
+                                       , typeArgs :: [Type] }
                         | Cast { _castedExpr :: Annotated Expression }
                         | LValueExpr { _lvalueExpr :: LValue }
   deriving Show
@@ -69,9 +70,7 @@ data Expression = Expression { _exprContents :: ExpressionContents
   deriving Show
 
 data LValue = Variable { _lvalueVarName :: String}
-            | Dereference { _derefPointer :: Annotated ExpressionContents
-                          , _derefType :: Type }
-            | FieldAccess { _structExpr :: ExpressionContents
-                          , _structMembers :: [(String, Type)]
+            | Dereference { _derefPointer :: Annotated Expression }
+            | FieldAccess { _structExpr :: Expression
                           , _fieldIdx :: Integer }
   deriving Show

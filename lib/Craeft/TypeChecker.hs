@@ -219,14 +219,16 @@ typeCheckExpr (Annotated expr p) =
                             op (checkedRhs ^. exprType)
         return (TAST.Binop checkedLhs op checkedRhs, ty)
     -- Use the return type of the function.
-    AST.FunctionCall f args _ -> do
+    AST.FunctionCall f args targs -> do
         checkedF <- typeCheckExpr f
         checkedArgs <- mapM typeCheckExpr args
+        checkedTargs <- mapM typeCheckType targs
         case checkedF ^. exprType of
             Function args ret -> do
                 when (map (view exprType) checkedArgs /= args) $
                     throw p "argument types do not match function signature"
-                return (TAST.FunctionCall checkedF checkedArgs, ret)
+                return ( TAST.FunctionCall checkedF checkedArgs checkedTargs
+                       , ret)
             _ -> throw p "cannot call non-function"
     -- Use the result type of the cast.
     AST.Cast toType fromExpr -> do
@@ -322,15 +324,16 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
         t <- case ty of
             Pointer t -> return t
             _ -> throw p "cannot dereference non-pointer type"
-        return (ty, TAST.Dereference (Annotated contents p') t)
+        let expr = TAST.Expression contents t
+        return (ty, TAST.Dereference (Annotated expr p'))
     AST.FieldAccess e n -> do
         str <- typeCheckExpr (Annotated e p)
         case str ^. exprType of 
             Struct fields -> do
                 (ty, i) <- liftMaybe (TypeError "no such field in struct" p)
                                      (lookupI n fields)
-                let strExpr = str ^. contents . TAST.exprContents
-                return (ty, TAST.FieldAccess strExpr fields i)
+                let strExpr = str ^. contents
+                return (ty, TAST.FieldAccess strExpr i)
             _ -> throw p "cannot access field of non-struct value"
   where lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]
 

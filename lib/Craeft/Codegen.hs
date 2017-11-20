@@ -23,7 +23,8 @@ import           Control.Monad.Except
 import           Control.Monad.State
 import           Control.Monad.Trans.Except (ExceptT, throwE)
 import           Control.Monad.Trans.State (StateT)
-import           Data.List (lookup, sortBy)
+import           Control.Monad.Writer (runWriterT)
+import           Data.List (lookup, sortBy, intercalate)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
@@ -40,7 +41,9 @@ import qualified LLVM.AST.Global as LLGlobal
 import qualified LLVM.AST.CallingConvention as CConv
 import           LLVM.AST.AddrSpace ( AddrSpace (..) )
 
+import qualified Craeft.TemplateFiller as Templ
 import qualified Craeft.TypedAST as TAST
+import qualified Craeft.TypedAST.Pass as Pass
 import qualified Craeft.Types as Types
 import qualified Craeft.Scope as Scope
 import           Craeft.Utility as Utility
@@ -53,8 +56,12 @@ data CodegenState = CodegenState {
     _currentBlock :: Name
     -- ^ A list of blocks produced in this Codgen.
  , _blocks       :: Map.Map Name BlockState
-    -- ^ A @Scope@ for codegen.
+    -- ^ A @Scope@ from identifiers to values.
  , _symtab       :: Scope.ScopeState Value
+    -- ^ A map from identifiers to expandable functions.
+ , _functionTab  :: Map.Map String (TAST.FunctionSignature, TAST.Block)
+    -- ^ A map from mangled labels to template specializations.
+ , _specializations :: Map.Map String TAST.TopLevel
     -- ^ The number of blocks in this @Codegen@.
  , _blockCount   :: Int
     -- ^ The register we are up to.
@@ -77,6 +84,8 @@ initCG :: Scope.ScopeState Value -> CodegenState
 initCG st = CodegenState { _currentBlock = Name "main"
                          , _blocks = Map.empty
                          , _symtab = st
+                         , _functionTab = Map.empty
+                         , _specializations = Map.empty
                          , _blockCount = 0
                          , _count = 0
                          , _globals = []
@@ -103,7 +112,6 @@ type LLVM a = CraeftMonad LlvmState a
 initLLVM :: LlvmState
 initLLVM = LlvmState { _llmod = defaultModule
                      , _env = Scope.empty }
- 
 
 -- | The codegen entry point.
 --
@@ -135,14 +143,14 @@ modifyBlock f = do active <- use currentBlock
                    blocks %= Map.adjust f active
 
 voidInstr :: Instruction -> Codegen ()
-voidInstr ins = modifyBlock (stack %~ (Do ins :))
+voidInstr ins = modifyBlock $ stack %~ (Do ins :)
 
 instr :: Instruction -> Type -> Codegen Operand
 instr _ VoidType = throwError $ InternalError "attempt to name void instruction"
 instr ins t = do count %= succ
                  ref <- UnName <$> use count
-                 modifyBlock (stack %~ ((ref := ins) :))
-                 return (LocalReference t ref)
+                 modifyBlock $ stack %~ ((ref := ins) :)
+                 return $ LocalReference t ref
 
 --
 -- Blocks.
@@ -210,6 +218,42 @@ addDefn d = do
   llmod %= \s -> s { moduleDefinitions = defs ++ [d] }
 
 --
+-- Templates.
+--
+
+-- | Get all of the function calls in a block.
+blockFunctionCalls :: MTraversal TAST.Block (Annotated TAST.Expression,
+                                             [Annotated TAST.Expression],
+                                             [Types.Type])
+blockFunctionCalls f = callsInBlock f >=> callsInConditions f
+  where calls = TAST.exprContents.Pass.eachExprFunctionCall
+        callsInBlock = each!.Pass.eachExpressionInStmt.calls
+        callsInConditions = each!.TAST.cond.contents.calls
+
+mangle :: [Types.Type] -> String -> String
+mangle ts fname = (fname ++) $ intercalate ".$" $ map makeName ts
+  -- TODO
+  where makeName _ = "typename"
+
+specialize :: [Types.Type] -> SourcePos -> TAST.FunctionSignature -> TAST.Block
+           -> Codegen ()
+specialize ts p sig block = do
+    ((nsig@(TAST.Sig name _ _ _), filled), others) <- lift $ runWriterT writer
+    specializations %= Map.insert (mangle ts name) (TAST.Function nsig filled)
+    -- fname <- case thisOne of
+    --    Expression (LValueExpr (Variable s)) -> return s
+    --    _ -> throwError $
+    --        TypeError "cannot expand function not refered to by name" p
+  where writer = Templ.fillFunction ts p (sig, block)
+
+specializeByName :: [Types.Type] -> SourcePos -> String -> Codegen ()
+specializeByName ts p n = do
+    (sig, block) <- uses functionTab (Map.! n)
+    specialize ts p sig block
+
+-- Before we codegen a function, get its 
+
+--
 -- Expression codegen.
 --
 
@@ -219,14 +263,11 @@ lvalueCodegen t a = case a^.contents of
     -- Variables are already stored as pointers.
     TAST.Variable s -> zoom symtab $ Scope.lookup s p
     -- Codegen'ing a pointer to a dereference is just codegen'ing the referand.
-    TAST.Dereference ptr referandTy ->
-        let expr = TAST.Expression (ptr^.contents) (Types.Pointer referandTy)
-         in (t,) <$> exprCodegen (Annotated expr $ ptr ^. pos)
+    TAST.Dereference expr -> (t,) <$> exprCodegen expr
     -- Get a pointer to the struct, and this is just a GEP.
-    TAST.FieldAccess str members i -> do
-        let structTy = Types.Struct members
-        (_, val) <- case TAST.Expression str structTy ^. TAST.exprContents of
-            TAST.LValueExpr l -> lvalueCodegen (Types.Struct members)
+    TAST.FieldAccess str i -> do
+        (_, val) <- case str ^. TAST.exprContents of
+            TAST.LValueExpr l -> lvalueCodegen (str ^. TAST.exprType)
                                                (Annotated l p)
             _ -> throw "cannot assign to r-value struct"
         let gep = GetElementPtr False val [constInt i] []
@@ -274,7 +315,7 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
         -- Use the @ops@ map to lookup that operation.
         f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
         f p ty (lty, lhs) (rty, rhs)
-    TAST.FunctionCall f args -> do
+    TAST.FunctionCall f args typeArgs -> do
         func <- exprCodegen f
 
         -- Codegen each of the arguments.

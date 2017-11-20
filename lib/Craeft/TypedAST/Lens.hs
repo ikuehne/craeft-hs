@@ -16,6 +16,7 @@ import Craeft.TypedAST.Impl
 
 makeLenses ''FunctionSignature
 makeLenses ''TopLevel
+makeLenses ''Statement
 makeLenses ''ExpressionContents
 makeLenses ''Expression
 makeLenses ''LValue

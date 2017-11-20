@@ -11,7 +11,9 @@ rather than syntactic references.
 -}
 
 module Craeft.TypedAST ( module Craeft.TypedAST.Impl
-                       , module Craeft.TypedAST.Lens ) where
+                       , module Craeft.TypedAST.Lens
+                       , module Craeft.TypedAST.Pass ) where
 
 import Craeft.TypedAST.Impl
 import Craeft.TypedAST.Lens
+import Craeft.TypedAST.Pass
