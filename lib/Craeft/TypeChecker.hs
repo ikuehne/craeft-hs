@@ -145,9 +145,14 @@ typeCheckStatement (Annotated s p) retty = flip Annotated p <$> case s of
     AST.Return e -> do
         -- Type-check the expression to be returned,
         checkedExpr <- typeCheckExpr e
+
+        let foundTy = checkedExpr^.exprType
+
         -- and check that it matches the expected return type.
-        when (checkedExpr ^. exprType /= retty) $
-            throw p "returned value does not match expected return type"
+        when (foundTy /= retty) $
+            throw p $ "returned value does not match expected return type "
+                   ++ "\n\n(found: " ++ show foundTy
+                   ++ "; expected: " ++ show retty ++ ")"
         return $ TAST.Return checkedExpr
     AST.VoidReturn -> do
         -- Check that we expected a void return.

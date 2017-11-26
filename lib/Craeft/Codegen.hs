@@ -327,7 +327,6 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
         f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
         f p ty (lty, lhs) (rty, rhs)
     TAST.FunctionCall f args typeArgs -> do
-        traceM "Function call"
         func <- exprCodegen f
 
         -- Codegen each of the arguments.
@@ -335,10 +334,7 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
         -- Zip 'em with their metadata (for now, nothing).
         let args' = zip args'' $ repeat []
             inst = LLInstr.Call Nothing CConv.C [] (Right func) args' [] []
-        traceM $ "result type: " ++ show llty
-        res <- instr inst llty
-        traceM "got result"
-        return res
+        instr inst llty
     -- Just dereference the codegen'ed l-value.
     TAST.LValueExpr lv -> do
         (lvTy, lvOp) <- lvalueCodegen ty (Annotated lv p)
@@ -348,7 +344,9 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
                  in instr inst llty
             -- (Functions are a special case.)
             Types.Function _ _ -> return lvOp
-    other -> error $ show other
+    TAST.Cast e -> do
+        casted <- exprCodegen e
+        cast p (e^.contents.TAST.exprType, casted) ty
   where p = a ^. pos
         ops = Map.fromList [ ("+", addValues)
                            , ("-", subValues)
@@ -384,6 +382,7 @@ cast p (Types.Signed oldbits, o) new@(Types.Unsigned _) =
 cast p (Types.Floating oldprec, o) (Types.Floating newprec) =
     castWithExtTrunc Types.Floating fext ftrunc oldprec newprec o
 cast p (Types.Pointer _, o) ty@(Types.Unsigned _) = bitcast o ty
+cast p (Types.Pointer _, o) ty@(Types.Pointer _) = bitcast o ty
 cast p _ _ = throwError $ TypeError "invalid cast" p
 
 --
@@ -495,6 +494,8 @@ translateType (Types.Struct fields) =
 translateType (Types.Pointer t) = ptr $ translateType t
 translateType (Types.Function ts t) =
     LLTy.FunctionType (translateType t) (map translateType ts) False
+translateType (Types.Hole _) =
+    error "internal error: attempt to codegen from type hole"
 
 -- | Statement codegen.
 stmtCodegen :: Annotated TAST.Statement -> Codegen ()
@@ -562,6 +563,7 @@ toplevelCodegen (Annotated tl p) = case tl of
                                      mapM_ stmtCodegen body'
             addCgGlobals cgState
             define retty (sig ^. TAST.name) args (createBlocks cgState)
+
         when (sig^.TAST.ntargs /= 0) $
             functionTab %= Map.insert (sig^.TAST.name) (sig, body)
 

@@ -107,6 +107,9 @@ liftPos (Annotated m p) = flip Annotated p <$> m
 headerColor :: IO ()
 headerColor = hSetSGR stderr [SetColor Foreground Vivid Red]
 
+pointerColor :: IO ()
+pointerColor = hSetSGR stderr [SetColor Foreground Vivid Blue]
+
 resetColor :: IO ()
 resetColor = hSetSGR stderr [Reset]
 
@@ -125,6 +128,8 @@ prettyPrintHelper :: String -> String -> SourcePos -> IO ()
 prettyPrintHelper header msg pos = do 
     put $ renderPos pos ++ ": "
     printWithHeader header msg
+    put "\n"
+    printLineInFile pos
 
 printWithHeader :: String -> String -> IO ()
 printWithHeader header msg = do
@@ -133,6 +138,17 @@ printWithHeader header msg = do
     resetColor
     put ": "
     putln msg
+
+printLineInFile :: SourcePos -> IO ()
+printLineInFile pos = do
+    l <- (!! line) . lines <$> readFile name
+    putln l
+    put $ replicate col ' '
+    pointerColor
+    putln "^"
+  where name = sourceName pos
+        line = sourceLine pos - 1
+        col = sourceColumn pos - 1
 
 -- | This almost certainly exists somewhere in some form already...
 foldTraversals ts f c = foldr ((*>) . ($ c) . ($ f)) (pure c) ts

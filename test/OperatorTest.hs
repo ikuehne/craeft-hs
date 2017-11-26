@@ -103,7 +103,6 @@ makeOperatorTestSuite :: ArithmeticOp -> TestTree
 makeOperatorTestSuite (ArithmeticOp intOp floatOp craeftOp name) =
       testGroup (name ++ " tests")
     [ test "32-bit" "I32" "int32_t" "%d" (intOp :: Binary Int32)
-    , test "8-bit" "I8" "int8_t" "%d" (intOp :: Binary Int8)
     , test "64-bit" "I64" "int64_t" "%lld" (intOp :: Binary Int64)
     , test "32-bit unsigned" "U32" "uint32_t" "%u" (intOp :: Binary Word32) 
     , test "64-bit unsigned" "U64" "uint64_t" "%llu" (intOp :: Binary Word64) 

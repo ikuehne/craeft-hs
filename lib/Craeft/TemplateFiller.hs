@@ -96,4 +96,5 @@ fillType (Hole i) = do p <- asks instancePos
   where holesMap = Map.fromList . zip [1..] <$> asks templateArgs
         noSuchHole i = TypeError ("no such hole: " ++ show i)
 fillType (Struct fields) = Struct <$> (each._2 %%~ fillType) fields
+fillType (Pointer other) = Pointer <$> fillType other
 fillType other = return other

@@ -76,19 +76,30 @@ positionExpr f = do pos <- getPosition
 
 unsigned pos = do i <- Lexer.unsigned
                   return $ Annotated (AST.UIntLiteral i) pos
+  <?> "unsigned integer literal"
 signed pos = do i <- Lexer.integer
                 return $ Annotated (AST.IntLiteral i) pos
+  <?> "signed integer literal"
 float pos = do f <- Lexer.float
                return $ Annotated (AST.FloatLiteral f) pos
+  <?> "float literal"
 string pos = do s <- Lexer.string
                 return $ Annotated (AST.StringLiteral s) pos
+  <?> "string literal"
+
+cast pos = do t <- Lexer.parens typeParser
+              e <- term
+              return $ Annotated (AST.Cast t e) pos
+  <?> "cast"
+
 
 expr :: ExpressionParser
 expr = buildExpressionParser table term <?> "expression"
 
 term :: ExpressionParser
 term = do p <- getPosition
-          Lexer.parens expr
+          try (positionExpr cast)
+            <|> Lexer.parens expr
             <|> positionExpr unsigned
             <|> positionExpr signed
             <|> positionExpr float

@@ -7,10 +7,12 @@ import Test.Tasty
 
 import ScopeTest
 import TypeCheckerTest
+import TemplTest
 import OperatorTest
 
 main :: IO ()
 main = defaultMain $ testGroup "Tests" [
       testGroup "Unit Tests" [ scopeTests
                              , typeCheckerTests ]
-    , testGroup "Integration Tests" [ operatorTests ] ]
+    , testGroup "Integration Tests" [ operatorTests
+                                    , templTests ] ]

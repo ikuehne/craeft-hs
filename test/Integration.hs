@@ -1,4 +1,5 @@
-module Integration (programProperty) where
+module Integration ( deterministicProperty
+                   , programProperty ) where
 
 import           Control.Exception
 import           Control.Monad (forM_, when)
@@ -14,6 +15,18 @@ import           System.IO
 import qualified System.IO.Temp as Temp
 import qualified System.Process as Proc
 import qualified System.Random as Rand
+
+deterministicProperty ::
+                   String -- ^ A Craeft program to test.
+                -> String -- ^ A C program to link it against.
+                -> [String] -- ^ Arguments
+                -- ^ The property of the output text to test.
+                -> (String -> Assertion)
+                -> Assertion
+deterministicProperty craeftProgram cProgram args test =
+    withCompiledCraeftExecutable craeftProgram cProgram $ \execfile -> do
+        stdout <- Proc.readProcess execfile args ""
+        test stdout
 
 programProperty :: (Show a, Rand.Random a)
                 => String -- ^ A Craeft program to test.
