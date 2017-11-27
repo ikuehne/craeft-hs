@@ -1,8 +1,6 @@
 module Craeft.TemplateFiller where
 
-import           Control.Arrow ((***))
 import           Control.Lens
-import           Control.Monad (sequence)
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.Writer

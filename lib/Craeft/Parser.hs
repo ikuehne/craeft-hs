@@ -14,16 +14,12 @@ module Craeft.Parser ( parseExpression
                      , parseProgram ) where
 
 import           Control.Lens
-import           Control.Monad
-
-import           Debug.Trace (trace, traceM)
 
 import           Control.Monad.Trans.Except
 import           Text.Parsec hiding ( SourcePos )
 import           Text.Parsec.String (Parser)
 import           Text.Parsec.Error as E
 import           Text.Parsec.Expr
-import           Text.Parsec.Char
 
 import qualified Craeft.AST as AST
 import qualified Craeft.Lexer as Lexer
@@ -144,6 +140,7 @@ fieldAccessOp = Infix ((do pos <- getPosition
   where result pos (Annotated struct _)
                    (Annotated (AST.LValueExpr (AST.Variable v)) _)
           = Annotated (AST.LValueExpr (AST.FieldAccess struct v)) pos
+        result _ _ _ = undefined
 
 binary op = Infix (do pos <- getPosition
                       Lexer.reservedOp op
@@ -173,11 +170,11 @@ statement = compoundDeclaration
         <|> AST.ExpressionStatement <$> expr
         <|> assignment
         <|> returnStatement
-        -- <|> ifStatement
+        <|> ifStatement
         <?> "statement"
 
 returnStatement :: Parser AST.Statement
-returnStatement = (do r <- Lexer.reserved "return"
+returnStatement = (do Lexer.reserved "return"
                       (AST.Return <$> expr) <|> return AST.VoidReturn)
               <?> "return statement"
 

@@ -42,6 +42,8 @@ library
     , llvm-hs-pure         >= 5.0
     , containers           >= 0.5
     , lens                 >= 4.0
+  ghc-options: -Wall -Werror -fno-warn-name-shadowing
+                             -fno-warn-missing-signatures
 
 executable craeft
   hs-source-dirs:      src

@@ -18,21 +18,16 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 
 module Craeft.Codegen ( codegen ) where
 
-import           Debug.Trace (traceM)
-
 import           Data.Function (on)
 import           Data.String (fromString)
 import           Control.Monad.Except
 import           Control.Monad.State
-import           Control.Monad.Trans.Except (ExceptT, throwE)
-import           Control.Monad.Trans.State (StateT)
 import           Control.Monad.Writer (runWriterT)
-import           Data.List (lookup, sortBy, intercalate)
+import           Data.List (sortBy, intercalate)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
 import           Control.Lens
-import           Control.Lens.Internal.Zoom ( Focusing )
 import           LLVM.AST
 import qualified LLVM.AST.FloatingPointPredicate as FPPred
 import qualified LLVM.AST.IntegerPredicate as IPred
@@ -134,13 +129,6 @@ uniqueName n = uses names (Map.lookup n) >>= recordName n . fromMaybe 0
                             names %= Map.insert n next
                             return $ mkName $ n ++ show next
 
--- | Get the current @BlockState@.
-current :: Codegen BlockState
-current = do c <- use currentBlock
-             bs <- use blocks
-             let err = InternalError $ "No such block: " ++ show c
-             liftMaybe err $ Map.lookup c bs
-
 modifyBlock :: (BlockState -> BlockState) -> Codegen ()
 modifyBlock f = do active <- use currentBlock
                    blocks %= Map.adjust f active
@@ -175,8 +163,7 @@ addBlock bname = do
 
 -- | Terminate the given block with the given terminator instruciton.
 terminate :: Terminator -> Codegen ()
-terminate trm = do active <- use currentBlock
-                   modifyBlock (term %~ const (Just $ Do trm) )
+terminate trm = modifyBlock (term %~ const (Just $ Do trm) )
 
 -- | Switch to the block of the given name.
 switchBlock :: Name -> Codegen ()
@@ -190,7 +177,7 @@ inBlock n c = switchBlock n >> Scope.nested (zoom symtab) c
 
 -- | Sort the blocks on index.
 sortBlocks :: [(Name, BlockState)] -> [(Name, BlockState)]
-sortBlocks = sortBy (compare `on` (_idx . snd))
+sortBlocks = sortBy (compare `on` (^.(_2.idx)))
 
 -- | Extract the blocks used in a @Codegen@ to the llvm-hs AST.
 createBlocks :: CodegenState -> [BasicBlock]
@@ -248,8 +235,8 @@ mangledTypeName (Types.Floating Types.SinglePrec) = "float"
 mangledTypeName (Types.Floating Types.DoublePrec) = "float"
 mangledTypeName (Types.Function args ret) = "fn." ++ intercalate ".$." 
                     (map mangledTypeName args ++ [mangledTypeName ret]) ++ ".nf"
-mangledTypeName Types.Opaque = "opaque"
-mangledTypeName (Types.Hole i) = error "attempt to mangle name with hole"
+mangledTypeName (Types.Opaque n) = "opaque." ++ n
+mangledTypeName (Types.Hole _) = error "attempt to mangle name with hole"
 mangledTypeName Types.Void = "void"
 
 mangle :: [Types.Type] -> String -> String
@@ -260,7 +247,7 @@ mangle ts fname = ((fname ++ ".") ++)
 specialize :: [Types.Type] -> SourcePos -> TAST.FunctionSignature -> TAST.Block
            -> LLVM [Specialization]
 specialize ts p sig block = do
-      ((nsig@(TAST.Sig name _ _ _), filled), others) <- lift $ runWriterT writer
+      ((nsig@(TAST.Sig name _ _ _), filled), _) <- lift $ runWriterT writer
       return [(mangle ts name, (TAST.name %~ mangle ts) nsig, filled)]
   where writer = Templ.fillFunction ts p (sig, block)
 
@@ -275,7 +262,7 @@ specializeAll = blockFunctionCalls (\(Annotated e p, args, ts) -> do
     n <- liftMaybe (TypeError "cannot expand function not refered to by name" p)
                  $ e ^? fnameLens
     specializations <- specializeByName ts p n
-    forM_ specializations $ \(name, sig, block) ->
+    forM_ specializations $ \(_, sig, block) ->
         toplevelCodegen (Annotated (TAST.Function sig block) p)
     let e' = (fnameLens %~ mangle ts) e
     return (Annotated e' p, args, ts))
@@ -342,7 +329,7 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
         -- Use the @ops@ map to lookup that operation.
         f <- liftMaybe (TypeError msg p) $ Map.lookup op ops
         f p ty (lty, lhs) (rty, rhs)
-    TAST.FunctionCall f args typeArgs -> do
+    TAST.FunctionCall f args _ -> do
         func <- exprCodegen f
 
         -- Codegen each of the arguments.
@@ -355,11 +342,10 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
     TAST.LValueExpr lv -> do
         (lvTy, lvOp) <- lvalueCodegen ty (Annotated lv p)
         case lvTy of
-            Types.Pointer referandTy ->
-                let inst = LLInstr.Load False lvOp Nothing 0 []
-                 in instr inst llty
+            Types.Pointer _ -> instr (LLInstr.Load False lvOp Nothing 0 []) llty
             -- (Functions are a special case.)
             Types.Function _ _ -> return lvOp
+            _ -> undefined
     TAST.Cast e -> do
         casted <- exprCodegen e
         cast p (e^.contents.TAST.exprType, casted) ty
@@ -387,18 +373,18 @@ castWithExtTrunc constructor extender truncator old new operand
     | otherwise = truncator operand (constructor new)
 
 cast :: SourcePos -> Value -> Types.Type -> Codegen Operand
-cast p (Types.Signed oldbits, o) (Types.Signed newbits) =
+cast _ (Types.Signed oldbits, o) (Types.Signed newbits) =
     castWithExtTrunc Types.Signed sext trunc oldbits newbits o
 cast p (Types.Unsigned oldbits, o) new@(Types.Signed _) =
     cast p (Types.Signed oldbits, o) new
-cast p (Types.Unsigned oldbits, o) (Types.Unsigned newbits) =
+cast _ (Types.Unsigned oldbits, o) (Types.Unsigned newbits) =
     castWithExtTrunc Types.Unsigned zext trunc oldbits newbits o
 cast p (Types.Signed oldbits, o) new@(Types.Unsigned _) =
     cast p (Types.Unsigned oldbits, o) new
-cast p (Types.Floating oldprec, o) (Types.Floating newprec) =
+cast _ (Types.Floating oldprec, o) (Types.Floating newprec) =
     castWithExtTrunc Types.Floating fext ftrunc oldprec newprec o
-cast p (Types.Pointer _, o) ty@(Types.Unsigned _) = bitcast o ty
-cast p (Types.Pointer _, o) ty@(Types.Pointer _) = bitcast o ty
+cast _ (Types.Pointer _, o) ty@(Types.Unsigned _) = bitcast o ty
+cast _ (Types.Pointer _, o) ty@(Types.Pointer _) = bitcast o ty
 cast p _ _ = throwError $ TypeError "invalid cast" p
 
 --
@@ -459,7 +445,7 @@ divValues :: Operator
 divValues p t l@(Types.Unsigned _, _) r@(Types.Unsigned _, _) = do
     (lhs, rhs) <- casted p l r t
     uintDiv lhs rhs t
-divValues p t l@(lt, lo) r@(rt, ro)
+divValues p t l@(lt, _) r@(rt, _)
   | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r t
                                                 sintDiv lhs rhs t
   | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
@@ -472,15 +458,18 @@ makeComparison :: IPred.IntegerPredicate
                -> FPPred.FloatingPointPredicate
                -> Operator
 -- Unsigned comparisons are special.
-makeComparison ipred upred fpred p t
-               l@(Types.Unsigned lbits, lo) r@(Types.Unsigned rbits, ro) = do
+makeComparison _ upred _ p _
+               l@(Types.Unsigned lbits, _) r@(Types.Unsigned rbits, _) = do
     (lhs, rhs) <- casted p l r $ Types.Unsigned $ max lbits rbits
-    icmpFromCode upred lo ro
-makeComparison ipred upred fpred p t l@(lt, lo) r@(rt, ro)
-  | Types.integral lt && Types.integral rt = do (lhs, rhs) <- casted p l r maxTy
-                                                icmpFromCode ipred lo ro
+    icmpFromCode upred lhs rhs
+makeComparison ipred upred fpred p _ l@(lt, lo) r@(rt, ro)
+  | Types.integral lt && Types.integral rt =
+    do (lhs, rhs) <- casted p l r maxTy
+       case maxTy of Types.Unsigned _ -> icmpFromCode upred lhs rhs
+                     Types.Signed _ -> icmpFromCode ipred lhs rhs
+                     _ -> undefined
   | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r maxTy
-                                                fcmpFromCode fpred lo ro
+                                                fcmpFromCode fpred lhs rhs
   | Types.pointer lt && Types.pointer rt = icmpFromCode ipred lo ro
   | otherwise = throwError $ TypeError ("cannot compare " ++ show lt
                                               ++ " with " ++ show rt) p
@@ -510,6 +499,8 @@ translateType (Types.Struct fields) =
 translateType (Types.Pointer t) = ptr $ translateType t
 translateType (Types.Function ts t) =
     LLTy.FunctionType (translateType t) (map translateType ts) False
+translateType (Types.Opaque name) =
+    LLTy.NamedTypeReference $ Name $ fromString name
 translateType (Types.Hole _) =
     error "internal error: attempt to codegen from type hole"
 
@@ -568,7 +559,7 @@ runCgInLlvm cg = do
         Right res -> return res
 
 toplevelCodegen :: Annotated TAST.TopLevel -> LLVM ()
-toplevelCodegen (Annotated tl p) = case tl of
+toplevelCodegen (Annotated tl _) = case tl of
     TAST.Function sig body -> do
         when (sig^.TAST.ntargs == 0) $ do
             body' <- specializeAll body
@@ -586,10 +577,11 @@ toplevelCodegen (Annotated tl p) = case tl of
     TAST.FunctionDecl sig -> do
         (args, retty) <- codegenSig sig
         define retty (sig ^. TAST.name) args []
+
+    _ -> return ()
   where 
         codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
-        codegenSig (TAST.Sig name args ntargs retty) = do
-            cgState <- initCG <$> use env
+        codegenSig (TAST.Sig name args _ retty) = do
             (fty, llretty, argtys) <- fmap fst $ runCgInLlvm $ do
                 let llretty = translateType retty
                     argtys = map (translateType . snd) args
@@ -663,9 +655,7 @@ floatSub :: Operand -> Operand -> Types.Type -> Codegen Operand
 floatSub l r t = instr (LLInstr.FSub NoFastMathFlags l r []) (translateType t)
 
 ptrSub :: Operand -> Operand -> Types.Type -> Codegen Operand
-ptrSub l r t = do lhsAsInt <- bitcast l (Types.Signed 64)
-                  rhsAsInt <- bitcast r (Types.Signed 64)
-                  intSub l r t
+ptrSub = intSub
 
 intMul :: Operand -> Operand -> Types.Type -> Codegen Operand
 intMul l r t = instr (LLInstr.Mul False False l r []) (translateType t)

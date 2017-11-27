@@ -12,7 +12,6 @@ Stability   : experimental
 
 module Craeft.Utility ( Annotated (..)
                       , contents
-                      , foldTraversals
                       , (!.)
                       , pos
                       , Error (..)
@@ -33,7 +32,6 @@ import System.Console.ANSI
 import System.IO
 
 import Control.Monad.Except (MonadError, catchError, throwError)
-import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State (StateT)
 import Text.Parsec.Pos
@@ -95,7 +93,10 @@ renderError (TypeError msg p) = renderHelper "type error" msg p
 renderError (InternalError msg) = withHeader "internal error" msg
 renderError (UsageError msg) = withHeader "usage error" msg
 
+renderHelper :: String -> String -> SourcePos -> String
 renderHelper header msg p = renderPos p ++ ": " ++ withHeader header msg
+
+withHeader :: String -> String -> String
 withHeader header msg = header ++ ": " ++ msg
 
 instance Functor Annotated where
@@ -119,7 +120,7 @@ put = hPutStr stderr
 putln :: String -> IO ()
 putln = hPutStrLn stderr
 
-
+renderPos :: SourcePos -> String
 renderPos pos = sourceName pos ++ ":"
              ++ show (sourceLine pos) ++ ":"
              ++ show (sourceColumn pos)
@@ -150,9 +151,6 @@ printLineInFile pos = do
         line = sourceLine pos - 1
         col = sourceColumn pos - 1
 
--- | This almost certainly exists somewhere in some form already...
-foldTraversals ts f c = foldr ((*>) . ($ c) . ($ f)) (pure c) ts
-
 type MTraversal a b = forall m. Monad m => (b -> m b) -> a -> m a
 
 -- | Data @Annotated@ with a source position.
@@ -162,5 +160,8 @@ data Annotated a = Annotated { _contents :: a, _pos :: SourcePos }
 makeLenses ''Annotated
 
 -- | Access `l2` of the contents of `l1`.
+(!.) :: Functor f
+     => ((Annotated a2 -> f (Annotated a1)) -> c)
+     -> (a -> a2 -> f a1) -> a -> c
 (!.) l1 l2 = l1 . contents . l2
 infixr 9 !.

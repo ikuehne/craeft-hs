@@ -29,7 +29,6 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 
 import           Control.Lens
-import           Control.Monad.Except
 import           Control.Monad.State
 
 import           Craeft.Utility

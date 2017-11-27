@@ -18,7 +18,7 @@ data Type = Struct [(String, Type)]
           | Signed Int
           | Floating Precision
           | Function [Type] Type
-          | Opaque
+          | Opaque String
           | Hole Int
           | Void
   deriving (Eq, Ord, Show)

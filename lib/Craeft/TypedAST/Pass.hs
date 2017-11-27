@@ -4,13 +4,10 @@
 module Craeft.TypedAST.Pass where
 
 import Control.Lens
-import Control.Monad
-import Debug.Trace (trace)
 
 import           Craeft.TypedAST.Impl
 import           Craeft.TypedAST.Lens
 import qualified Craeft.Types as Types
-import           Craeft.Types (Type)
 import           Craeft.Utility
 
 -- | A traversal into all leaf expressions.
@@ -18,11 +15,11 @@ eachLeafExpression :: Traversal' ExpressionContents ExpressionContents
 eachLeafExpression f expr = case expr of
     Reference _ ->
         (referencedVal.eachLValueExpr.exprContents.eachLeafExpression) f expr
-    Binop lhs op rhs -> flip Binop op <$> subExprs f lhs <*> subExprs f rhs
-    FunctionCall func args targs -> FunctionCall
-                                <$> subExprs f func
-                                <*> (each.subExprs) f args
-                                <*> pure targs
+    Binop l o r -> flip Binop o <$> subExprs f l <*> subExprs f r
+    FunctionCall function vargs targs -> FunctionCall
+                                     <$> subExprs f function
+                                     <*> (each.subExprs) f vargs
+                                     <*> pure targs
     Cast _ -> (castedExpr.subExprs $ f) expr
     LValueExpr _ ->
         (lvalueExpr.eachLValueExpr.exprContents.eachLeafExpression) f expr
@@ -35,29 +32,29 @@ eachExprFunctionCall :: Traversal' ExpressionContents (Annotated Expression,
 eachExprFunctionCall f expr = case expr of
     Reference _ ->
         (referencedVal.eachLValueExpr.exprContents.eachExprFunctionCall) f expr
-    Binop lhs op rhs -> flip Binop op <$> subExprs f lhs <*> subExprs f rhs
-    FunctionCall func args targs -> uncurry3 FunctionCall
-                                <$> f (func, args, targs)
+    Binop l o r -> flip Binop o <$> subExprs f l <*> subExprs f r
+    FunctionCall function vargs targs -> uncurry3 FunctionCall
+                                <$> f (function, vargs, targs)
     Cast _ -> (castedExpr.subExprs $ f) expr
     LValueExpr _ ->
         (lvalueExpr.eachLValueExpr.exprContents.eachExprFunctionCall) f expr
     other -> pure other
   where subExprs = contents.exprContents.eachExprFunctionCall
-        uncurry3 f (x, y, z) = f x y z
+        uncurry3 g (x, y, z) = g x y z
 
 eachLValueExpr :: Traversal' LValue Expression
 eachLValueExpr f d@(Dereference _) = (derefPointer.contents) f d
 eachLValueExpr f (FieldAccess e i) =
     FieldAccess <$> f e <*> pure i
-eachLValueExpr f other = pure other
+eachLValueExpr _ other = pure other
 
 -- | Does *not* include sub-statements.
 --
 -- To do that, just do `eachSubStmt.eachExpressionInStmt`.
 eachExpressionInStmt :: Traversal' Statement Expression
 eachExpressionInStmt f stmt = case stmt of
-    ExpressionStmt e -> stmtExpr f stmt
-    Return ret -> (retExpr.contents) f stmt
+    ExpressionStmt _ -> stmtExpr f stmt
+    Return _ -> (retExpr.contents) f stmt
     Assignment l r -> Assignment <$> (contents.eachLValueExpr) f l
                                  <*> contents f r
     CompoundDeclaration n t e -> CompoundDeclaration n t

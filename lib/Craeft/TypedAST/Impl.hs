@@ -12,8 +12,6 @@ because Template Haskell has problems with mutually recursive structures.
 
 module Craeft.TypedAST.Impl where
 
-import Control.Monad
-
 import Craeft.Types
 import Craeft.Utility
 

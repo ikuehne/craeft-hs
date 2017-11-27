@@ -17,7 +17,6 @@ module Craeft.TypeChecker ( typeCheck ) where
 import           Control.Monad ( forM_, when )
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import qualified Data.List as List
 
 import           Control.Lens
 import           Control.Monad.Except (throwError)
@@ -110,14 +109,14 @@ typeCheckTopLevel :: Annotated AST.TopLevel
 typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
     AST.StructDeclaration name members -> do
         -- Allow recursive types.
-        zoom types $ Scope.insert name Opaque
+        zoom types $ Scope.insert name (Opaque name)
         memberTypes <- mapM (typeCheckType . declToType) members
         let names = map (AST.name . view contents) members
             memberAssocList = zip names memberTypes
         zoom types $ Scope.insert name $ Struct memberAssocList
         return $ TAST.StructDeclaration name memberAssocList
     AST.TypeDeclaration name -> do
-        zoom types $ Scope.insert name Opaque
+        zoom types $ Scope.insert name (Opaque name)
         return $ TAST.TypeDeclaration name
     AST.FunctionDecl sig -> do
         checkedSig <- typeCheckSig sig
@@ -299,17 +298,17 @@ inferBinopType p (Floating precl) s (Floating precr)
   | s `Set.member` bitwiseOps = throw p $ "can't perform bitwise operation on "
                                        ++ "floating-point values"
   | s `Set.member` arithmeticOps = return $ Floating (max precl precr)
-inferBinopType p (Floating prec) _ _ =
+inferBinopType p (Floating _) _ _ =
     throw p "cannot perform operation between floating-point and another type"
-inferBinopType p _ _ (Floating prec) =
+inferBinopType p _ _ (Floating _) =
     throw p "cannot perform operation between floating-point and another type"
-inferBinopType p (Signed _) "+" (Pointer t) = return $ Pointer t
-inferBinopType p (Unsigned l) "+" (Pointer t) = return $ Pointer t
-inferBinopType p (Pointer t) "+" (Signed _) = return $ Pointer t
-inferBinopType p (Pointer t) "+" (Unsigned _) = return $ Pointer t
-inferBinopType p (Pointer t) "-" (Signed _) = return $ Pointer t
-inferBinopType p (Pointer t) "-" (Unsigned _) = return $ Pointer t
-inferBinopType p _ s _ = throw p
+inferBinopType _ (Signed _) "+" (Pointer t) = return $ Pointer t
+inferBinopType _ (Unsigned _) "+" (Pointer t) = return $ Pointer t
+inferBinopType _ (Pointer t) "+" (Signed _) = return $ Pointer t
+inferBinopType _ (Pointer t) "+" (Unsigned _) = return $ Pointer t
+inferBinopType _ (Pointer t) "-" (Signed _) = return $ Pointer t
+inferBinopType _ (Pointer t) "-" (Unsigned _) = return $ Pointer t
+inferBinopType p _ _ _ = throw p
     "type checker doesn't know how to deal with these yet"
 
 -- | Type-check an l-value.

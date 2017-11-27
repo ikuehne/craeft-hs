@@ -13,8 +13,6 @@ as well as source-position annotations for error messages (see @Utility@).
 
 module Craeft.AST where
 
-import qualified Text.Parsec.Pos as Pos
-
 import           Craeft.Utility
 
 -- | Function signatures: everything needed to call a function.
