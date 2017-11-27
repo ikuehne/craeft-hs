@@ -63,6 +63,7 @@ test-suite craeft-tests
       Integration
     , OperatorTest
     , ScopeTest
+    , TemplTest
     , TypeCheckerTest
     , Utility
   build-depends:

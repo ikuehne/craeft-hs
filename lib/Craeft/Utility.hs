@@ -108,7 +108,7 @@ headerColor :: IO ()
 headerColor = hSetSGR stderr [SetColor Foreground Vivid Red]
 
 pointerColor :: IO ()
-pointerColor = hSetSGR stderr [SetColor Foreground Vivid Blue]
+pointerColor = hSetSGR stderr [SetColor Foreground Vivid Green]
 
 resetColor :: IO ()
 resetColor = hSetSGR stderr [Reset]

@@ -236,10 +236,26 @@ blockFunctionCalls f = callsInBlock f >=> callsInConditions f
         callsInBlock = each!.Pass.eachExpressionInStmt.calls
         callsInConditions = each!.TAST.cond.contents.calls
 
+-- | Get the type name for mangling.
+mangledTypeName (Types.Struct mems) =
+    "str."
+ ++ intercalate "$$" [name ++ ".$." ++ mangledTypeName t | (name, t) <- mems]
+ ++ ".rts"
+mangledTypeName (Types.Pointer t) = "ptr." ++ mangledTypeName t ++ ".rtp"
+mangledTypeName (Types.Unsigned bits) = "u" ++ show bits
+mangledTypeName (Types.Signed bits) = "i" ++ show bits
+mangledTypeName (Types.Floating Types.SinglePrec) = "float"
+mangledTypeName (Types.Floating Types.DoublePrec) = "float"
+mangledTypeName (Types.Function args ret) = "fn." ++ intercalate ".$." 
+                    (map mangledTypeName args ++ [mangledTypeName ret]) ++ ".nf"
+mangledTypeName Types.Opaque = "opaque"
+mangledTypeName (Types.Hole i) = error "attempt to mangle name with hole"
+mangledTypeName Types.Void = "void"
+
 mangle :: [Types.Type] -> String -> String
-mangle ts fname = (fname ++) $ intercalate ".$" $ map makeName ts
-  -- TODO
-  where makeName _ = "typename"
+mangle ts fname = ((fname ++ ".") ++)
+                $ intercalate ".$"
+                $ map mangledTypeName ts
 
 specialize :: [Types.Type] -> SourcePos -> TAST.FunctionSignature -> TAST.Block
            -> LLVM [Specialization]
@@ -358,7 +374,7 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
                            , (">=", greaterEqComp)
                            , ("==", eqComp)
                            , ("!=", neqComp) ]
-        ty = a ^. contents . TAST.exprType
+        ty = a^. contents . TAST.exprType
         llty = translateType ty
 
 --
