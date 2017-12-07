@@ -19,7 +19,7 @@ type Program = [Annotated TopLevel]
 
 data FunctionSignature = Sig { _name :: String
                              , _args :: [(String, Type)]
-                             , _ntargs :: Int
+                             , _fntargs :: Int
                              , _retty :: Type }
   deriving Show
 
@@ -28,7 +28,8 @@ data TopLevel = Function { _sig :: FunctionSignature
               | FunctionDecl { _declSig :: FunctionSignature }
               | TypeDeclaration { _declTypeName :: String }
               | StructDeclaration { _structName :: String
-                                  , _members :: [(String, Type)] }
+                                  , _members :: [(String, Type)]
+                                  , _sntargs :: Int }
   deriving Show
 
 type Block = [Annotated Statement]

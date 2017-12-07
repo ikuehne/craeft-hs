@@ -108,25 +108,23 @@ term = do p <- getPosition
 functionCall :: SourcePos -> ExpressionParser
 functionCall pos = flip Annotated pos <$>
     do fname <- AST.LValueExpr . AST.Variable <$> Lexer.identifier
-       (do targs <- (do Lexer.openTemplate
-                        targs <- Lexer.commaSep typeParser
-                        Lexer.closeTemplate
-                        return targs) <|> return []
+       (do targs <- templateSpecialization
            args <- Lexer.parens $ Lexer.commaSep expr
            return $ AST.FunctionCall (Annotated fname pos) args targs)
           <|> return fname
 
 lvalue :: Parser AST.LValue
-lvalue = dereference <|> variable <|> fieldAccess <?> "lvalue"
+lvalue = try fieldAccess <|> dereference <|> Lexer.parens lvalue <|> variable <?> "lvalue"
 
 variable :: Parser AST.LValue
 variable = AST.Variable <$> Lexer.identifier <?> "variable"
 
 fieldAccess :: Parser AST.LValue
-fieldAccess = do e <- expr
+fieldAccess = do e <- term
                  Lexer.dot
                  (AST.Variable v) <- variable
                  return $ AST.FieldAccess (e ^. contents) v
+  <?> "field access"
 
 dereference :: Parser AST.LValue
 dereference = (do Lexer.reservedOp "*"
@@ -159,7 +157,8 @@ table = [fieldAccessOp] : (fmap binary <$>
 typeParser :: Parser (Annotated AST.Type)
 typeParser = do p <- getPosition
                 n <- Lexer.tname
-                let name = Annotated (AST.NamedType n) p
+                targs <- templateSpecialization
+                let name = Annotated (AST.NamedType n targs) p
                 ptrs <- map _pos <$> many (annotate $ Lexer.reservedOp "*")
                 let aux pos t = Annotated (AST.Pointer t) pos
                 return $ foldr aux name ptrs
@@ -167,8 +166,8 @@ typeParser = do p <- getPosition
 -- Parsing statements.
 statement :: Parser AST.Statement
 statement = compoundDeclaration
+        <|> try assignment
         <|> AST.ExpressionStatement <$> expr
-        <|> assignment
         <|> returnStatement
         <|> ifStatement
         <?> "statement"
@@ -180,6 +179,7 @@ returnStatement = (do Lexer.reserved "return"
 
 assignment :: Parser AST.Statement
 assignment = do p <- getPosition
+                
                 l <- lvalue
                 ((do Lexer.equals
                      r <- expr
@@ -223,21 +223,20 @@ topLevel :: Parser AST.TopLevel
 topLevel = structDeclaration <|> functionDefinition <?> "toplevel form"
 
 structDeclaration :: Parser AST.TopLevel
-structDeclaration = (do Lexer.reserved "struct"
-                        name <- Lexer.tname
-                        (do fields <- Lexer.braces members
-                            return $ AST.StructDeclaration name fields)
-                           <|> return (AST.TypeDeclaration name))
-                      <?> "struct definition"
+structDeclaration = 
+    do Lexer.reserved "struct"
+       targs <- templateArgList
+       name <- Lexer.tname
+       (do fields <- Lexer.braces members
+           return $ AST.StructDeclaration name targs fields)
+          <|> return (AST.TypeDeclaration name)
+    <?> "struct definition"
   where members = semiFollowed $ annotate declaration
 
 functionSignature :: Parser AST.FunctionSignature
 functionSignature = (do
       Lexer.reserved "fn"
-      targs <- (do Lexer.openTemplate
-                   targs <- Lexer.commaSep (annotate Lexer.tname)
-                   Lexer.closeTemplate
-                   return targs) <|> return []
+      targs <- templateArgList
       name <- Lexer.identifier
       args <- argList
       let void = Annotated AST.Void <$> getPosition
@@ -253,3 +252,15 @@ fnDeclOrDef :: Annotated AST.FunctionSignature -> Parser AST.TopLevel
 fnDeclOrDef sig = (AST.FunctionDefinition sig <$> Lexer.braces block
                     <?> "function definition")
                 <|> (Lexer.semi >> return (AST.FunctionDecl $ sig ^. contents))
+
+templateSpecialization :: Parser [Annotated AST.Type]
+templateSpecialization = (do Lexer.openTemplate
+                             targs <- Lexer.commaSep typeParser
+                             Lexer.closeTemplate
+                             return targs) <|> return []
+
+templateArgList :: Parser [Annotated String]
+templateArgList = (do Lexer.openTemplate
+                      targs <- Lexer.commaSep (annotate Lexer.tname)
+                      Lexer.closeTemplate
+                      return targs) <|> return []

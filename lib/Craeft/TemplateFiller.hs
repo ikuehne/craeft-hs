@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Craeft.TemplateFiller where
 
 import           Control.Lens
@@ -58,8 +60,11 @@ type Templatizer a = a -> Templatize a
 
 fillFunction :: [Types.Type] -> SourcePos
              -> (FunctionSignature, Block)
-             -> TemplatizerWorklist (FunctionSignature, Block)
-fillFunction = runTemplatizer templatizeFunction
+             -> CraeftExcept ([FunctionSpecialization], FunctionSignature, Block)
+fillFunction ts p func =
+    do ((sig, block), others) <-
+          runWriterT $ runTemplatizer templatizeFunction ts p func
+       return (others, sig, block)
 
 runTemplatizer :: Templatizer a -> [Types.Type] -> SourcePos -> a
                -> TemplatizerWorklist a
@@ -69,30 +74,37 @@ runTemplatizer t args p x = writer
         writer = runReaderT reader inst
 
 templatizeStatement :: Templatizer Statement
-templatizeStatement = eachStatementType %%~ fillType
+templatizeStatement = eachStatementType %%~ fillTypeTempl
 
 templatizeBlock :: Templatizer Block
 templatizeBlock = each.contents %%~ templatizeStatement
 
 templatizeSig :: Templatizer FunctionSignature
-templatizeSig = args.each._2 %%~ fillType
-            >=> retty %%~ fillType
-            >=> ntargs %%~ const (pure 0)
+templatizeSig = args.each._2 %%~ fillTypeTempl
+            >=> retty %%~ fillTypeTempl
+            >=> fntargs %%~ const (pure 0)
 
 templatizeFunction :: Templatizer (FunctionSignature, Block)
-templatizeFunction = _1 %%~ templatizeSig >=> _2 %%~ templatizeBlock
+templatizeFunction (sig, block) =
+    do block <- templatizeBlock block
+       sig <- templatizeSig sig
+       return (sig, block)
 
 --
 -- Handy utilities for the Templatize monad.
 --
 
+fillTypeTempl :: Type -> Templatize Type
+fillTypeTempl t = do p <- asks instancePos 
+                     ts <- asks templateArgs
+                     fillType p ts t
+
 -- | Fill any holes in the given type.
-fillType :: Type -> Templatize Type
-fillType (Hole i) = do p <- asks instancePos
-                       maybeHole <- Map.lookup i <$> holesMap
-                       liftMaybe (noSuchHole i p) maybeHole
-  where holesMap = Map.fromList . zip [1..] <$> asks templateArgs
+fillType :: MonadError Error m => SourcePos -> [Type] -> Type -> m Type
+fillType p ts (Hole i) = let maybeHole = Map.lookup i holesMap
+                          in liftMaybe (noSuchHole i p) maybeHole
+  where holesMap = Map.fromList $ zip [1..] ts
         noSuchHole i = TypeError ("no such hole: " ++ show i)
-fillType (Struct fields) = Struct <$> (each._2 %%~ fillType) fields
-fillType (Pointer other) = Pointer <$> fillType other
-fillType other = return other
+fillType p ts (Struct fields) = Struct <$> (each._2 %%~ fillType p ts) fields
+fillType p ts (Pointer other) = Pointer <$> fillType p ts other
+fillType _ _ other = return other

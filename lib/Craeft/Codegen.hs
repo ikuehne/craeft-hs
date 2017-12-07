@@ -22,7 +22,6 @@ import           Data.Function (on)
 import           Data.String (fromString)
 import           Control.Monad.Except
 import           Control.Monad.State
-import           Control.Monad.Writer (runWriterT)
 import           Data.List (sortBy, intercalate)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
@@ -240,20 +239,23 @@ mangledTypeName (Types.Hole _) = error "attempt to mangle name with hole"
 mangledTypeName Types.Void = "void"
 
 mangle :: [Types.Type] -> String -> String
-mangle ts fname = ((fname ++ ".") ++)
-                $ intercalate ".$"
-                $ map mangledTypeName ts
+mangle [] fname = fname
+mangle ts _ = intercalate ".$"
+            $ map mangledTypeName ts
 
 specialize :: [Types.Type] -> SourcePos -> TAST.FunctionSignature -> TAST.Block
            -> LLVM [Specialization]
 specialize ts p sig block = do
-      ((nsig@(TAST.Sig name _ _ _), filled), _) <- lift $ runWriterT writer
+      (_, nsig@(TAST.Sig name _ _ _), filled) <- templatized
       return [(mangle ts name, (TAST.name %~ mangle ts) nsig, filled)]
-  where writer = Templ.fillFunction ts p (sig, block)
+  where templatized = lift $ Templ.fillFunction ts p (sig, block)
 
 specializeByName :: [Types.Type] -> SourcePos -> String -> LLVM [Specialization]
-specializeByName ts p n = uses functionTab (Map.! n)
-                      >>= uncurry (specialize ts p)
+specializeByName ts p n = do
+    tab <- use functionTab
+    func <- liftMaybe (TypeError ("no such template function: " ++ n) p)
+                      (Map.lookup n tab)
+    uncurry (specialize ts p) func
 
 specializeAll :: TAST.Block -> LLVM TAST.Block
 specializeAll = blockFunctionCalls (\(Annotated e p, args, ts) -> do 
@@ -261,9 +263,10 @@ specializeAll = blockFunctionCalls (\(Annotated e p, args, ts) -> do
         fnameLens = TAST.exprContents.TAST.lvalueExpr.TAST.lvalueVarName
     n <- liftMaybe (TypeError "cannot expand function not refered to by name" p)
                  $ e ^? fnameLens
-    specializations <- specializeByName ts p n
-    forM_ specializations $ \(_, sig, block) ->
-        toplevelCodegen (Annotated (TAST.Function sig block) p)
+    unless (null ts) $ do
+        specializations <- specializeByName ts p n
+        forM_ specializations $ \(_, sig, block) ->
+            toplevelCodegen (Annotated (TAST.Function sig block) p)
     let e' = (fnameLens %~ mangle ts) e
     return (Annotated e' p, args, ts))
 
@@ -345,7 +348,7 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
             Types.Pointer _ -> instr (LLInstr.Load False lvOp Nothing 0 []) llty
             -- (Functions are a special case.)
             Types.Function _ _ -> return lvOp
-            _ -> undefined
+            other -> error $ show other
     TAST.Cast e -> do
         casted <- exprCodegen e
         cast p (e^.contents.TAST.exprType, casted) ty
@@ -383,6 +386,7 @@ cast p (Types.Signed oldbits, o) new@(Types.Unsigned _) =
     cast p (Types.Unsigned oldbits, o) new
 cast _ (Types.Floating oldprec, o) (Types.Floating newprec) =
     castWithExtTrunc Types.Floating fext ftrunc oldprec newprec o
+cast _ (Types.Unsigned _, o) ty@(Types.Pointer _) = bitcast o ty
 cast _ (Types.Pointer _, o) ty@(Types.Unsigned _) = bitcast o ty
 cast _ (Types.Pointer _, o) ty@(Types.Pointer _) = bitcast o ty
 cast p _ _ = throwError $ TypeError "invalid cast" p
@@ -561,7 +565,7 @@ runCgInLlvm cg = do
 toplevelCodegen :: Annotated TAST.TopLevel -> LLVM ()
 toplevelCodegen (Annotated tl _) = case tl of
     TAST.Function sig body -> do
-        when (sig^.TAST.ntargs == 0) $ do
+        when (sig^.TAST.fntargs == 0) $ do
             body' <- specializeAll body
             (args, retty) <- codegenSig sig
             (_, cgState) <- runCgInLlvm $ do
@@ -571,7 +575,7 @@ toplevelCodegen (Annotated tl _) = case tl of
             addCgGlobals cgState
             define retty (sig ^. TAST.name) args (createBlocks cgState)
 
-        when (sig^.TAST.ntargs /= 0) $
+        when (sig^.TAST.fntargs /= 0) $
             functionTab %= Map.insert (sig^.TAST.name) (sig, body)
 
     TAST.FunctionDecl sig -> do
@@ -580,24 +584,24 @@ toplevelCodegen (Annotated tl _) = case tl of
 
     _ -> return ()
   where 
-        codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
-        codegenSig (TAST.Sig name args _ retty) = do
-            (fty, llretty, argtys) <- fmap fst $ runCgInLlvm $ do
-                let llretty = translateType retty
-                    argtys = map (translateType . snd) args
-                    fty = LLTy.FunctionType llretty argtys False 
-                return (ptr fty, llretty, argtys)
-            let op = ConstantOperand $ LLConst.GlobalReference fty $ mkName name
-                val = (Types.Function (map snd args) retty, op)
-            zoom env $ Scope.insert name val
-            return (zip argtys (argName . fst <$> args), llretty)
-        declareArg (str, ty) = do
-            let llty = translateType ty
-                argRegister = LocalReference llty $ argName str
-            alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
-            zoom symtab $ Scope.insert str (Types.Pointer ty, alloca)
-            voidInstr $ LLInstr.Store False alloca argRegister Nothing 0 []
-        argName str = mkName $ str ++ "##arg"
+      codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
+      codegenSig (TAST.Sig name args _ retty) = do
+          (fty, llretty, argtys) <- fmap fst $ runCgInLlvm $ do
+              let llretty = translateType retty
+                  argtys = map (translateType . snd) args
+                  fty = LLTy.FunctionType llretty argtys False 
+              return (ptr fty, llretty, argtys)
+          let op = ConstantOperand $ LLConst.GlobalReference fty $ mkName name
+              val = (Types.Function (map snd args) retty, op)
+          zoom env $ Scope.globalInsert name val
+          return (zip argtys (argName . fst <$> args), llretty)
+      declareArg (str, ty) = do
+          let llty = translateType ty
+              argRegister = LocalReference llty $ argName str
+          alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
+          zoom symtab $ Scope.insert str (Types.Pointer ty, alloca)
+          voidInstr $ LLInstr.Store False alloca argRegister Nothing 0 []
+      argName str = mkName $ str ++ "##arg"
 
 --
 -- Low-level LLVM utilities.

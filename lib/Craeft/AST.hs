@@ -19,7 +19,7 @@ import           Craeft.Utility
 data FunctionSignature = FunctionSignature {
     fnName :: String
   , args :: [Annotated ValueDeclaration]
-  , templateArgs :: [Annotated String]
+  , functionTemplateArgs :: [Annotated String]
   , retty :: Annotated Type
 } deriving Show
 
@@ -28,6 +28,7 @@ type Program = [Annotated TopLevel]
 -- | Top-level forms: forms that can appear outside of any other form.
 data TopLevel =
     StructDeclaration { structName :: String
+                      , structTemplateArgs :: [Annotated String]
                       , structMembers :: [Annotated ValueDeclaration] }
   | TypeDeclaration String
   | FunctionDecl FunctionSignature
@@ -64,7 +65,7 @@ data Statement =
 
 -- | The AST representation of a type--the way the type is named in Craeft.
 data Type =
-    NamedType String
+    NamedType String [Annotated Type]
   | Void
   | Pointer (Annotated Type)
   deriving Show

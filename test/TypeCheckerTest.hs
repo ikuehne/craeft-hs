@@ -29,7 +29,7 @@ shouldFail str program = testCase ("Typechecker does not fail on " ++ str) $
 
 undefinedTypenameFails = shouldFail "undefined type name" [
     funcWithBody $ map annotate [
-        Declaration (ValueDeclaration (NamedType "Undefined") "x") ] ]
+        Declaration (ValueDeclaration (NamedType "Undefined" []) "x") ] ]
 
 typeCheckerTests = testGroup "TypeChecker Tests" [
         undefinedTypenameFails

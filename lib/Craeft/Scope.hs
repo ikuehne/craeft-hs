@@ -21,7 +21,8 @@ module Craeft.Scope ( -- * Basic data types.
                     , nested
                       -- * Map operations.
                     , Craeft.Scope.lookup
-                    , insert ) where
+                    , insert
+                    , globalInsert ) where
 
 import           Control.Applicative
 import qualified Data.List as List
@@ -65,6 +66,11 @@ lookup k p = do ss <- use scopes
 -- | Insert a new value in the innermost scope.
 insert :: String -> a -> Scope a ()
 insert k v = whenNonEmpty $ \s ss -> put (ScopeState $ Map.insert k v s : ss)
+
+globalInsert :: String -> a -> Scope a ()
+globalInsert k v = do scopes %= reverse
+                      bracketed (scopes %= reverse) $
+                          insert k v
 
 --
 -- Lower-level operations.

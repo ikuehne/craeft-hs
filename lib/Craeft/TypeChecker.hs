@@ -23,6 +23,7 @@ import           Control.Monad.Except (throwError)
 import           Control.Monad.Trans.State (evalStateT)
 
 import qualified Craeft.AST as AST
+import qualified Craeft.TemplateFiller as Templ
 import qualified Craeft.TypedAST as TAST
 import           Craeft.Types
 import           Craeft.Utility
@@ -79,7 +80,14 @@ typeCheck program = evalStateT (mapM typeCheckTopLevel program) initState
 -- | Convert an AST type to a Craeft type.
 typeCheckType :: Annotated AST.Type -> Checker Type
 typeCheckType (Annotated t p) = case t of
-    AST.NamedType s -> zoom types $ Scope.lookup s p
+    AST.NamedType s targs ->
+        do ty <- zoom types $ Scope.lookup s p
+           case ty of
+             Struct fields -> do
+                 genedTargs <- mapM typeCheckType targs
+                 filledTargs <- mapM (Templ.fillType p genedTargs . snd) fields
+                 return $ Struct $ zip (map fst fields) filledTargs
+             other -> return other
     AST.Void -> return Void
     AST.Pointer t' -> Pointer <$> typeCheckType t'
 
@@ -98,7 +106,7 @@ typeCheckSig :: AST.FunctionSignature -> Checker TAST.FunctionSignature
 typeCheckSig (AST.FunctionSignature name args targs retty') = do
     argtys <- mapM (typeCheckType . declToType) args
     retty <- typeCheckType retty'
-    zoom variables $ Scope.insert name (Function argtys retty)
+    zoom variables $ Scope.globalInsert name (Function argtys retty)
     let typedArgs = zip (map (AST.name . view contents) args) argtys
         typedSig = TAST.Sig name typedArgs (length targs) retty
     return typedSig
@@ -107,14 +115,17 @@ typeCheckSig (AST.FunctionSignature name args targs retty') = do
 typeCheckTopLevel :: Annotated AST.TopLevel
                   -> Checker (Annotated TAST.TopLevel)
 typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
-    AST.StructDeclaration name members -> do
+    AST.StructDeclaration name targs members -> do
         -- Allow recursive types.
         zoom types $ Scope.insert name (Opaque name)
-        memberTypes <- mapM (typeCheckType . declToType) members
+        memberTypes <- nested $ do
+            forM_ (zip [1..] targs) $ \(i, Annotated targ _) ->
+                zoom types $ Scope.insert targ $ Hole i
+            mapM (typeCheckType . declToType) members
         let names = map (AST.name . view contents) members
             memberAssocList = zip names memberTypes
         zoom types $ Scope.insert name $ Struct memberAssocList
-        return $ TAST.StructDeclaration name memberAssocList
+        return $ TAST.StructDeclaration name memberAssocList (length targs)
     AST.TypeDeclaration name -> do
         zoom types $ Scope.insert name (Opaque name)
         return $ TAST.TypeDeclaration name
@@ -122,11 +133,15 @@ typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
         checkedSig <- typeCheckSig sig
         return $ TAST.FunctionDecl checkedSig
     AST.FunctionDefinition (Annotated sig _) body -> do
-        checkedSig <- typeCheckSig sig
+        checkedSig <- nested $ do
+            forM_ (zip [1..] $ map (view contents) $ AST.functionTemplateArgs sig) $
+                 \(i, name) -> zoom types $ Scope.insert name (Hole i)
+            typeCheckSig sig
+        
         nested $ do
             forM_ (checkedSig ^. TAST.args) $ \(name, ty) ->
                  zoom variables $ Scope.insert name ty
-            forM_ (zip [1..] $ map (view contents) $ AST.templateArgs sig) $
+            forM_ (zip [1..] $ map (view contents) $ AST.functionTemplateArgs sig) $
                  \(i, name) -> zoom types $ Scope.insert name (Hole i)
             let checkStmt s = typeCheckStatement s (checkedSig ^. TAST.retty) 
             checkedBody <- mapM checkStmt body
@@ -229,6 +244,9 @@ typeCheckExpr (Annotated expr p) =
         checkedTargs <- mapM typeCheckType targs
         case checkedF ^. exprType of
             Function args ret -> do
+                args <- mapM (Templ.fillType p checkedTargs) args
+                ret <- Templ.fillType p checkedTargs ret
+
                 when (map (view exprType) checkedArgs /= args) $
                     throw p "argument types do not match function signature"
                 return ( TAST.FunctionCall checkedF checkedArgs checkedTargs
@@ -329,7 +347,7 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
             Pointer t -> return t
             _ -> throw p "cannot dereference non-pointer type"
         let expr = TAST.Expression contents t
-        return (ty, TAST.Dereference (Annotated expr p'))
+        return (t, TAST.Dereference (Annotated expr p'))
     AST.FieldAccess e n -> do
         str <- typeCheckExpr (Annotated e p)
         case str ^. exprType of 
@@ -338,7 +356,8 @@ typeCheckLValue p lv = (\(t, l) -> (t, Annotated l p)) <$> case lv of
                                      (lookupI n fields)
                 let strExpr = str ^. contents
                 return (ty, TAST.FieldAccess strExpr i)
-            _ -> throw p "cannot access field of non-struct value"
+            o -> throw p $ "cannot access field of non-struct value of type"
+                        ++ show o
   where lookupI v l = lookup v [(k, (v, i)) | ((k, v), i) <- zip l [0..]]
 
 throw :: SourcePos -> String -> Checker a
