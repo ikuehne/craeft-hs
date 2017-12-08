@@ -17,7 +17,7 @@ data Type = Struct [(String, Type)]
           | Unsigned Int
           | Signed Int
           | Floating Precision
-          | Function [Type] Type
+          | Function [Type] Type Int
           | Opaque
           | Hole Int
           | Void
@@ -35,3 +35,7 @@ floating _ = False
 pointer :: Type -> Bool
 pointer (Pointer _) = True
 pointer _ = False
+
+holePointer :: Type -> Bool
+holePointer (Pointer (Hole _)) = True
+holePointer _ = False

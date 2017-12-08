@@ -119,7 +119,6 @@ put = hPutStr stderr
 putln :: String -> IO ()
 putln = hPutStrLn stderr
 
-
 renderPos pos = sourceName pos ++ ":"
              ++ show (sourceLine pos) ++ ":"
              ++ show (sourceColumn pos)

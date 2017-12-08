@@ -8,12 +8,16 @@ Stability   : experimental
 -}
 
 module Craeft.Driver ( compileToObject
-                     , compileToLlvm ) where
+                     , compileToLlvm
+                     , optimize ) where
 
+import           Control.Monad ( void )
 import           System.IO ( FilePath )
 
 import qualified LLVM.AST as AST
 import qualified LLVM.Module as LLVM
+import qualified LLVM.PassManager as Pass
+import qualified LLVM.Transforms as Passes
 import           LLVM.Internal.Context ( withContext )
 import qualified LLVM.Internal.Target as Target
 
@@ -28,11 +32,20 @@ runTransformationInContext ast op =
 compileToObject :: FilePath -> AST.Module -> IO ()
 compileToObject path mod =
     Target.withHostTargetMachine $ \machine ->
-        runTransformationInContext mod $
-            LLVM.writeObjectToFile machine (LLVM.File path)
+        runTransformationInContext mod $ \mod -> do
+            -- optimize mod
+            LLVM.writeObjectToFile machine (LLVM.File path) mod
+
+optimize :: LLVM.Module -> IO ()
+optimize mod = void $ Pass.withPassManager spec $ flip Pass.runPassManager mod
+  where spec = Pass.defaultCuratedPassSetSpec { Pass.optLevel=Just 1 }
+        passes = [ Passes.PromoteMemoryToRegister
+                 , Passes.ConstantPropagation
+                 , Passes.DeadInstructionElimination ]
 
 -- | Compile the given module to LLVM IR assembly at the given path.
 compileToLlvm :: FilePath -> AST.Module -> IO ()
 compileToLlvm path mod =
-    runTransformationInContext mod $
-        LLVM.writeLLVMAssemblyToFile (LLVM.File path)
+    runTransformationInContext mod $ \mod -> do
+        optimize mod
+        LLVM.writeLLVMAssemblyToFile (LLVM.File path) mod

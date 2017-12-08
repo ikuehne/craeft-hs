@@ -14,6 +14,8 @@ consistent in the process.
 
 module Craeft.TypeChecker ( typeCheck ) where
 
+import           Debug.Trace (traceM)
+
 import           Control.Monad ( forM_, when )
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -97,9 +99,11 @@ exprType = contents . TAST.exprType
 -- Enters the function into the scope, and returns the TAST signature.
 typeCheckSig :: AST.FunctionSignature -> Checker TAST.FunctionSignature
 typeCheckSig (AST.FunctionSignature name args targs retty') = do
+    forM_ (zip [1..] $ map (view contents) targs) $
+         \(i, name) -> zoom types $ Scope.insert name (Hole i)
     argtys <- mapM (typeCheckType . declToType) args
     retty <- typeCheckType retty'
-    zoom variables $ Scope.insert name (Function argtys retty)
+    zoom variables $ Scope.insert name (Function argtys retty $ length targs)
     let typedArgs = zip (map (AST.name . view contents) args) argtys
         typedSig = TAST.Sig name typedArgs (length targs) retty
     return typedSig
@@ -127,7 +131,8 @@ typeCheckTopLevel (Annotated c p) = flip Annotated p <$> case c of
         nested $ do
             forM_ (checkedSig ^. TAST.args) $ \(name, ty) ->
                  zoom variables $ Scope.insert name ty
-            forM_ (zip [1..] $ map (view contents) $ AST.templateArgs sig) $
+            let targs = AST.templateArgs sig
+            forM_ (zip [1..] $ map (view contents) targs) $
                  \(i, name) -> zoom types $ Scope.insert name (Hole i)
             let checkStmt s = typeCheckStatement s (checkedSig ^. TAST.retty) 
             checkedBody <- mapM checkStmt body
@@ -229,11 +234,15 @@ typeCheckExpr (Annotated expr p) =
         checkedArgs <- mapM typeCheckExpr args
         checkedTargs <- mapM typeCheckType targs
         case checkedF ^. exprType of
-            Function args ret -> do
-                when (map (view exprType) checkedArgs /= args) $
+            Function args ret ntargs -> do
+                let targMap =
+                      Map.fromList $ zip (map Hole [1..ntargs]) checkedTargs
+                let args' = (targMap Map.!) <$> args
+                let ret' = targMap Map.! ret
+                when (map (view exprType) checkedArgs /= args') $
                     throw p "argument types do not match function signature"
                 return ( TAST.FunctionCall checkedF checkedArgs checkedTargs
-                       , ret)
+                       , ret')
             _ -> throw p "cannot call non-function"
     -- Use the result type of the cast.
     AST.Cast toType fromExpr -> do

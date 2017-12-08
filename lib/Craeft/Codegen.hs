@@ -18,7 +18,7 @@ Codegen from the @TAST@ to the llvm (as in @llvm-hs-pure@) AST.
 
 module Craeft.Codegen ( codegen ) where
 
-import           Debug.Trace (traceM)
+import           Debug.Trace (trace, traceM)
 
 import           Data.Function (on)
 import           Data.String (fromString)
@@ -28,7 +28,7 @@ import           Control.Monad.Trans.Except (ExceptT, throwE)
 import           Control.Monad.Trans.State (StateT)
 import           Control.Monad.Writer (runWriterT)
 import           Data.List (lookup, sortBy, intercalate)
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Map as Map
 
 import           Control.Lens
@@ -44,7 +44,6 @@ import qualified LLVM.AST.Global as LLGlobal
 import qualified LLVM.AST.CallingConvention as CConv
 import           LLVM.AST.AddrSpace ( AddrSpace (..) )
 
-import qualified Craeft.TemplateFiller as Templ
 import qualified Craeft.TypedAST as TAST
 import qualified Craeft.TypedAST.Pass as Pass
 import qualified Craeft.Types as Types
@@ -70,7 +69,9 @@ data CodegenState = CodegenState {
    -- Necessary in particular for string and array literals.
  , _globals      :: [LLGlobal.Global]
    -- A multiset of @Names@ used thus far in this codegen.
- , _names        :: Map.Map String Int }
+ , _names        :: Map.Map String Int
+   -- ^ Whether the current function is polymorphic in the return type.
+ , _polyRet      :: Bool }
 
 type Value = (Types.Type, Operand)
 
@@ -79,14 +80,15 @@ type Value = (Types.Type, Operand)
 -- Use the given top-level environment.  In the current pattern, a new
 -- @CodegenState@ is used for each function, so we need to preserve the
 -- @ScopeState@ between functions for top-level definitions.
-initCG :: Scope.ScopeState Value -> CodegenState
-initCG st = CodegenState { _currentBlock = Name "main"
-                         , _blocks = Map.empty
-                         , _symtab = st
-                         , _blockCount = 0
-                         , _count = 0
-                         , _globals = []
-                         , _names = Map.empty }
+initCG :: Bool -> Scope.ScopeState Value -> CodegenState
+initCG p st = CodegenState { _currentBlock = Name "main"
+                           , _blocks = Map.empty
+                           , _symtab = st
+                           , _blockCount = 0
+                           , _count = 0
+                           , _globals = []
+                           , _names = Map.empty
+                           , _polyRet = p }
 
 -- | The state recorded for a single block.
 data BlockState
@@ -112,9 +114,11 @@ type LLVM a = CraeftMonad LlvmState a
 
 -- | The initial @LlvmState@ for a fresh program.
 initLLVM :: LlvmState
-initLLVM = LlvmState { _llmod = defaultModule
-                     , _functionTab = Map.empty
-                     , _env = Scope.empty }
+initLLVM = LlvmState {
+      _llmod = defaultModule { moduleDefinitions = [memcpyDef] }
+    , _functionTab = Map.empty
+    , _env = Scope.empty
+  }
 
 -- | The codegen entry point.
 --
@@ -224,63 +228,6 @@ addDefn d = do
   llmod %= \s -> s { moduleDefinitions = defs ++ [d] }
 
 --
--- Templates.
---
-
--- | Get all of the function calls in a block.
-blockFunctionCalls :: MTraversal TAST.Block (Annotated TAST.Expression,
-                                             [Annotated TAST.Expression],
-                                             [Types.Type])
-blockFunctionCalls f = callsInBlock f >=> callsInConditions f
-  where calls = TAST.exprContents.Pass.eachExprFunctionCall
-        callsInBlock = each!.Pass.eachExpressionInStmt.calls
-        callsInConditions = each!.TAST.cond.contents.calls
-
--- | Get the type name for mangling.
-mangledTypeName (Types.Struct mems) =
-    "str."
- ++ intercalate "$$" [name ++ ".$." ++ mangledTypeName t | (name, t) <- mems]
- ++ ".rts"
-mangledTypeName (Types.Pointer t) = "ptr." ++ mangledTypeName t ++ ".rtp"
-mangledTypeName (Types.Unsigned bits) = "u" ++ show bits
-mangledTypeName (Types.Signed bits) = "i" ++ show bits
-mangledTypeName (Types.Floating Types.SinglePrec) = "float"
-mangledTypeName (Types.Floating Types.DoublePrec) = "float"
-mangledTypeName (Types.Function args ret) = "fn." ++ intercalate ".$." 
-                    (map mangledTypeName args ++ [mangledTypeName ret]) ++ ".nf"
-mangledTypeName Types.Opaque = "opaque"
-mangledTypeName (Types.Hole i) = error "attempt to mangle name with hole"
-mangledTypeName Types.Void = "void"
-
-mangle :: [Types.Type] -> String -> String
-mangle ts fname = ((fname ++ ".") ++)
-                $ intercalate ".$"
-                $ map mangledTypeName ts
-
-specialize :: [Types.Type] -> SourcePos -> TAST.FunctionSignature -> TAST.Block
-           -> LLVM [Specialization]
-specialize ts p sig block = do
-      ((nsig@(TAST.Sig name _ _ _), filled), others) <- lift $ runWriterT writer
-      return [(mangle ts name, (TAST.name %~ mangle ts) nsig, filled)]
-  where writer = Templ.fillFunction ts p (sig, block)
-
-specializeByName :: [Types.Type] -> SourcePos -> String -> LLVM [Specialization]
-specializeByName ts p n = uses functionTab (Map.! n)
-                      >>= uncurry (specialize ts p)
-
-specializeAll :: TAST.Block -> LLVM TAST.Block
-specializeAll = blockFunctionCalls (\(Annotated e p, args, ts) -> do 
-    let fnameLens :: Traversal' TAST.Expression String
-        fnameLens = TAST.exprContents.TAST.lvalueExpr.TAST.lvalueVarName
-    n <- liftMaybe (TypeError "cannot expand function not refered to by name" p)
-                 $ e ^? fnameLens
-    specializations <- specializeByName ts p n
-    forM_ specializations $ \(name, sig, block) ->
-        toplevelCodegen (Annotated (TAST.Function sig block) p)
-    let e' = (fnameLens %~ mangle ts) e
-    return (Annotated e' p, args, ts))
-
---
 -- Expression codegen.
 --
 
@@ -344,22 +291,27 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
         f p ty (lty, lhs) (rty, rhs)
     TAST.FunctionCall f args typeArgs -> do
         func <- exprCodegen f
+        let Types.Function argTypes _ _ = f^.contents.TAST.exprType
 
         -- Codegen each of the arguments.
-        args'' <- mapM exprCodegen args
-        -- Zip 'em with their metadata (for now, nothing).
-        let args' = zip args'' $ repeat []
-            inst = LLInstr.Call Nothing CConv.C [] (Right func) args' [] []
-        instr inst llty
+        args' <- sequence $ argCodegen <$> args <*> argTypes
+        args'' <- (args' ++) <$> mapM size typeArgs
+        case f^.contents.TAST.exprType of 
+            Types.Function _ (Types.Hole _) _ -> do
+                retParam <- alloca $ translateType ty
+                let retParamTy = Types.Pointer (Types.Unsigned 8) 
+                castedRetParam <- bitcast retParam retParamTy
+                let args''' = args'' ++ [castedRetParam]
+                voidInstr $ call func $ zip args''' (repeat [])
+                load retParam llty
+            _ -> instr (call func $ zip args'' (repeat [])) llty
     -- Just dereference the codegen'ed l-value.
     TAST.LValueExpr lv -> do
         (lvTy, lvOp) <- lvalueCodegen ty (Annotated lv p)
         case lvTy of
-            Types.Pointer referandTy ->
-                let inst = LLInstr.Load False lvOp Nothing 0 []
-                 in instr inst llty
+            Types.Pointer referandTy -> load lvOp llty
             -- (Functions are a special case.)
-            Types.Function _ _ -> return lvOp
+            Types.Function{} -> return lvOp
     TAST.Cast e -> do
         casted <- exprCodegen e
         cast p (e^.contents.TAST.exprType, casted) ty
@@ -376,6 +328,15 @@ exprCodegen a = case a ^. contents . TAST.exprContents of
                            , ("!=", neqComp) ]
         ty = a^. contents . TAST.exprType
         llty = translateType ty
+        argCodegen expr (Types.Hole i) = do
+            let ty = expr^.contents.TAST.exprType
+            let llty = translateType ty
+            val <- exprCodegen expr
+            space <- alloca llty
+            store space val
+            return space
+        argCodegen expr _ = exprCodegen expr
+            
 
 --
 -- Casts.
@@ -397,7 +358,8 @@ cast p (Types.Signed oldbits, o) new@(Types.Unsigned _) =
     cast p (Types.Unsigned oldbits, o) new
 cast p (Types.Floating oldprec, o) (Types.Floating newprec) =
     castWithExtTrunc Types.Floating fext ftrunc oldprec newprec o
-cast p (Types.Pointer _, o) ty@(Types.Unsigned _) = bitcast o ty
+cast p (Types.Pointer _, o) ty@(Types.Unsigned _) = ptrtoint o ty
+cast p (Types.Unsigned _, o) ty@(Types.Pointer _) = inttoptr o ty
 cast p (Types.Pointer _, o) ty@(Types.Pointer _) = bitcast o ty
 cast p _ _ = throwError $ TypeError "invalid cast" p
 
@@ -425,6 +387,7 @@ addValues p t l@(lt, lo) r@(rt, ro)
   | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
                                                 floatAdd lhs rhs t
   | Types.integral lt && Types.pointer rt = ptrAdd ro lo t
+  | Types.holePointer lt && Types.integral rt = addValues p t r l
   | Types.pointer lt && Types.integral rt = ptrAdd lo ro t
   | otherwise = throwError $ TypeError ("cannot add " ++ show lt
                                             ++ " to " ++ show rt) p
@@ -440,7 +403,9 @@ subValues p t l@(lt, lo) r@(rt, ro)
         asSigned <- cast p r (Types.Signed 64)
         offset <- intNeg asSigned (Types.Signed 64)
         ptrAdd lo offset t
-  | Types.pointer lt && Types.pointer rt = ptrSub lo ro t
+  | Types.pointer lt && Types.pointer rt = do 
+        traceM $ "Subtracting pointers with result type " ++ show t
+        ptrSub lo ro t
   | otherwise = throwError $ TypeError ("cannot subtract " ++ show lt
                                                ++ " from " ++ show rt) p
 
@@ -450,7 +415,6 @@ mulValues p t l@(lt, lo) r@(rt, ro)
                                                 intMul lhs rhs t
   | Types.floating lt && Types.floating rt = do (lhs, rhs) <- casted p l r t
                                                 floatMul lhs rhs t
-  | Types.integral lt && Types.pointer rt = ptrAdd ro lo t
   | otherwise = throwError $ TypeError ("cannot multiply " ++ show lt
                                                  ++ " by " ++ show rt) p
 
@@ -508,30 +472,43 @@ translateType Types.Void = LLTy.VoidType
 translateType (Types.Struct fields) =
     LLTy.StructureType False $ map (translateType . snd) fields
 translateType (Types.Pointer t) = ptr $ translateType t
-translateType (Types.Function ts t) =
-    LLTy.FunctionType (translateType t) (map translateType ts) False
-translateType (Types.Hole _) =
-    error "internal error: attempt to codegen from type hole"
+translateType (Types.Function ts t n) =
+    LLTy.FunctionType (translateType t) (map translateType ts ++ targs) False
+  where targs = replicate n LLTy.i64
+translateType (Types.Hole _) = ptr LLTy.i8
 
 -- | Statement codegen.
 stmtCodegen :: Annotated TAST.Statement -> Codegen ()
 stmtCodegen (Annotated stmt p) = case stmt of
     TAST.ExpressionStmt e -> void $ exprCodegen (Annotated e p)
     TAST.Return e -> do
+        p <- use polyRet
         retval <- exprCodegen e
-        terminate $ LLInstr.Ret (Just retval) []
+        unless p $ terminate $ LLInstr.Ret (Just retval) []
+        when p $ do
+            (Types.Hole i, retParam) <-
+                zoom symtab $ Scope.lookup retParamName emptyPos
+            size <- targSize i
+            traceM $ "Return value: " ++ show retval
+            voidInstr $ memcpy retval retParam size
+            terminate $ LLInstr.Ret Nothing []
     TAST.VoidReturn -> terminate $ LLInstr.Ret Nothing []
     TAST.Assignment lhs rhs -> do
         (_, lhsAddr) <- lvalueCodegen (Types.Pointer $ rhs ^. exprTy) lhs
         rhsExpr <- exprCodegen rhs
-        voidInstr $ LLInstr.Store False lhsAddr rhsExpr Nothing 0 []
+        store lhsAddr rhsExpr
+    TAST.Declaration n (Types.Hole i) -> void $ declareHole n i
     TAST.Declaration n ty -> void $ declare n ty
+    TAST.CompoundDeclaration n ty@(Types.Hole i) init -> do
+        (size, space) <- declareHole n i
+        initVal <- exprCodegen init
+        -- and do the assignment.
+        voidInstr $ memcpy initVal space size
     TAST.CompoundDeclaration n ty init -> do
         -- Declare the new variable,
         space <- declare n ty
         -- codegen the initial value,
         initVal <- exprCodegen init
-        -- and do the assignment.
         voidInstr $ LLInstr.Store False space initVal Nothing 0 []
     TAST.IfStatement cond ifB elseB -> do
         -- We need three blocks: one for if the condition is true,
@@ -558,10 +535,19 @@ stmtCodegen (Annotated stmt p) = case stmt of
             alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
             zoom symtab $ Scope.insert n (Types.Pointer ty, alloca)
             return alloca
+        declareHole n i = do
+            size <- targSize i
+            alloca <-
+                instr (LLInstr.Alloca LLTy.i8 (Just size) 0 []) (ptr LLTy.i8)
+            lv <- instr (LLInstr.Alloca (ptr LLTy.i8) Nothing 0 [])
+                        (ptr $ ptr LLTy.i8)
+            voidInstr $ LLInstr.Store False lv alloca Nothing 0 []    
+            zoom symtab $ Scope.insert n (Types.Pointer (Types.Hole i), lv)
+            return (size, alloca)
 
-runCgInLlvm :: Codegen a -> LLVM (a, CodegenState)
-runCgInLlvm cg = do
-    cgState <- initCG <$> use env
+runCgInLlvm :: Bool -> Codegen a -> LLVM (a, CodegenState)
+runCgInLlvm p cg = do
+    cgState <- initCG p <$> use env
     let maybeSt = runStateT cg cgState
     case runIdentity $ runExceptT maybeSt of
         Left err -> throwError err
@@ -570,42 +556,72 @@ runCgInLlvm cg = do
 toplevelCodegen :: Annotated TAST.TopLevel -> LLVM ()
 toplevelCodegen (Annotated tl p) = case tl of
     TAST.Function sig body -> do
-        when (sig^.TAST.ntargs == 0) $ do
-            body' <- specializeAll body
-            (args, retty) <- codegenSig sig
-            (_, cgState) <- runCgInLlvm $ do
-                fnBlock <- addBlock $ sig ^. TAST.name
-                inBlock fnBlock $ do mapM_ declareArg (sig ^. TAST.args)
-                                     mapM_ stmtCodegen body'
-            addCgGlobals cgState
-            define retty (sig ^. TAST.name) args (createBlocks cgState)
-
-        when (sig^.TAST.ntargs /= 0) $
-            functionTab %= Map.insert (sig^.TAST.name) (sig, body)
+        (args, retty) <- codegenSig sig
+        let (polyRet, polyRetI) = case sig^.TAST.retty of
+              Types.Hole i -> (True, Just i)
+              _ -> (False, Nothing)
+        (_, cgState) <- runCgInLlvm polyRet $ do
+            fnBlock <- addBlock $ sig ^. TAST.name
+            inBlock fnBlock $ do
+                mapM_ declareArg (sig ^. TAST.args)
+                mapM_ declareTarg [1..sig^.TAST.ntargs]
+                when polyRet $ declareRetP (fromJust polyRetI)
+                mapM_ stmtCodegen body
+        addCgGlobals cgState
+        define retty (sig ^. TAST.name) args (createBlocks cgState)
 
     TAST.FunctionDecl sig -> do
         (args, retty) <- codegenSig sig
         define retty (sig ^. TAST.name) args []
-  where 
-        codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
+  where codegenSig :: TAST.FunctionSignature -> LLVM ([(Type, Name)], Type)
         codegenSig (TAST.Sig name args ntargs retty) = do
-            cgState <- initCG <$> use env
-            (fty, llretty, argtys) <- fmap fst $ runCgInLlvm $ do
-                let llretty = translateType retty
-                    argtys = map (translateType . snd) args
-                    fty = LLTy.FunctionType llretty argtys False 
-                return (ptr fty, llretty, argtys)
-            let op = ConstantOperand $ LLConst.GlobalReference fty $ mkName name
-                val = (Types.Function (map snd args) retty, op)
+            let -- Polymorphic return types are handled by a `return parameter`.
+                llretty = case retty of
+                    Types.Hole i -> LLTy.VoidType
+                    _ -> translateType retty
+                (retNames, retParam) = case retty of
+                    Types.Hole i -> ([mkName retParamName],
+                                     [translateType $ Types.Hole i])
+                    _ -> ([], [])
+                argtys = map (translateType . snd) args
+                      -- Add the sizes (in bytes) of all of the template
+                      -- parameters.
+                      ++ replicate ntargs LLTy.i64
+                      ++ retParam
+                fty = ptr (LLTy.FunctionType llretty argtys False )
+                op = ConstantOperand $ LLConst.GlobalReference fty $ mkName name
+                val = (Types.Function (map snd args) retty ntargs, op)
             zoom env $ Scope.insert name val
-            return (zip argtys (argName . fst <$> args), llretty)
+            let valueNames = argName . fst <$> args
+                holeNames = map (argName . targStr) [1..ntargs]
+                argNames = valueNames ++ holeNames ++ retNames
+            return (zip argtys argNames, llretty)
+
         declareArg (str, ty) = do
             let llty = translateType ty
                 argRegister = LocalReference llty $ argName str
-            alloca <- instr (LLInstr.Alloca llty Nothing 0 []) (ptr llty)
-            zoom symtab $ Scope.insert str (Types.Pointer ty, alloca)
-            voidInstr $ LLInstr.Store False alloca argRegister Nothing 0 []
+            space <- alloca llty
+            zoom symtab $ Scope.insert str (Types.Pointer ty, space)
+            store space argRegister
+        declareRetP i = do
+            let n = mkName retParamName
+                ty = Types.Hole i
+                argRegister = LocalReference (translateType ty) n 
+            zoom symtab $ Scope.insert retParamName (ty, argRegister)
+            
+        declareTarg i = declareArg (targStr i, Types.Signed 64)
         argName str = mkName $ str ++ "##arg"
+
+targStr = ("hole#" ++ ) . show
+targName = mkName . targStr
+
+retParamName = "ret.param#"
+
+emptyPos = newPos "" 0 0
+
+targSize :: Int -> Codegen Operand
+targSize i = do (_, op) <- zoom symtab $ Scope.lookup (targStr i) emptyPos
+                load op LLTy.i64
 
 --
 -- Low-level LLVM utilities.
@@ -621,9 +637,20 @@ fromLlvmCast llcast o t = instr (llcast o llty []) llty
 ptr :: Type -> Type
 ptr ty = PointerType ty (AddrSpace 0)
 
+alloca :: Type -> Codegen Operand
+alloca ty = instr (LLInstr.Alloca ty Nothing 0 []) (ptr ty)
+
+load :: Operand -> Type -> Codegen Operand
+load op = instr $ LLInstr.Load False op Nothing 0 []
+
+store :: Operand -> Operand -> Codegen ()
+store addr val = voidInstr $ LLInstr.Store False addr val Nothing 0 []
+
 -- | Create an operand from a constant @Integer@.
 constInt :: Integer -> Operand
-constInt i = ConstantOperand (LLConst.Int 64 i)
+constInt = constIntOfBits 64
+
+constIntOfBits b i = ConstantOperand (LLConst.Int b i)
 
 fext :: Operand -> Types.Type -> Codegen Operand
 fext = fromLlvmCast LLInstr.FPExt
@@ -642,6 +669,12 @@ trunc = fromLlvmCast LLInstr.Trunc
 
 bitcast :: Operand -> Types.Type -> Codegen Operand
 bitcast = fromLlvmCast LLInstr.BitCast
+
+inttoptr :: Operand -> Types.Type -> Codegen Operand
+inttoptr = fromLlvmCast LLInstr.IntToPtr
+
+ptrtoint :: Operand -> Types.Type -> Codegen Operand
+ptrtoint = fromLlvmCast LLInstr.PtrToInt
 
 intAdd :: Operand -> Operand -> Types.Type -> Codegen Operand
 intAdd l r t = instr (LLInstr.Add False False l r []) (translateType t)
@@ -663,9 +696,9 @@ floatSub :: Operand -> Operand -> Types.Type -> Codegen Operand
 floatSub l r t = instr (LLInstr.FSub NoFastMathFlags l r []) (translateType t)
 
 ptrSub :: Operand -> Operand -> Types.Type -> Codegen Operand
-ptrSub l r t = do lhsAsInt <- bitcast l (Types.Signed 64)
-                  rhsAsInt <- bitcast r (Types.Signed 64)
-                  intSub l r t
+ptrSub l r t = do lhsAsInt <- ptrtoint l (Types.Signed 64)
+                  rhsAsInt <- ptrtoint r (Types.Signed 64)
+                  intSub lhsAsInt rhsAsInt t
 
 intMul :: Operand -> Operand -> Types.Type -> Codegen Operand
 intMul l r t = instr (LLInstr.Mul False False l r []) (translateType t)
@@ -688,3 +721,36 @@ fcmpFromCode code o1 o2 = instr (LLInstr.FCmp code o1 o2 []) LLTy.i1
 
 icmpFromCode :: IPred.IntegerPredicate -> Operand -> Operand -> Codegen Operand
 icmpFromCode code o1 o2 = instr (LLInstr.ICmp code o1 o2 []) LLTy.i1
+
+size :: Types.Type -> Codegen Operand
+size t = do l <- alloca llt
+            r <- ptrAdd l offset (Types.Pointer t)
+            ptrSub r l (Types.Signed 64)
+  where llt = translateType t
+        p = ptr llt
+        offset = constInt 1
+
+--
+-- LLVM intrinsics.
+--
+
+memcpyName = "llvm.memcpy.p0i8.p0i8.i64"
+memcpyArgtys = [ptr LLTy.i8, ptr LLTy.i8, LLTy.i64, LLTy.i32, LLTy.i1]
+
+memcpy :: Operand -> Operand -> Operand -> Instruction
+memcpy src dest count = call memcpyOp args
+  where memcpyType = ptr $ LLTy.FunctionType LLTy.VoidType memcpyArgtys False
+        memcpyConst = LLConst.GlobalReference memcpyType $ mkName memcpyName
+        memcpyOp = ConstantOperand memcpyConst
+        args = [(arg, []) | arg <- [dest, src, count,
+                                    constIntOfBits 32 0, constIntOfBits 1 0]]
+
+memcpyDef :: Definition
+memcpyDef = GlobalDefinition $ functionDefaults {
+      LLGlobal.name        = mkName memcpyName
+    , LLGlobal.parameters  = ([Parameter ty nm [] | (ty, nm) <- args], False)
+    , LLGlobal.returnType  = LLTy.VoidType
+    , LLGlobal.basicBlocks = [] }
+  where args = zip memcpyArgtys (map UnName [1..])
+
+call fn args = LLInstr.Call Nothing CConv.C [] (Right fn) args [] []

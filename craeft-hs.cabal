@@ -26,7 +26,6 @@ library
     , Craeft.TypeChecker
     , Craeft.Types
     , Craeft.Scope
-    , Craeft.TemplateFiller
     , Craeft.TypedAST
     , Craeft.TypedAST.Impl
     , Craeft.TypedAST.Lens
